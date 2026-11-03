@@ -6,12 +6,14 @@ import {
   ArrowUpRight, Box, Camera, Check, ChevronDown, CircleHelp, Copy, Download,
   Eye, EyeOff, FileJson, FlipHorizontal2, FolderOpen, Grid3X3, Image as ImageIcon,
   Layers, Link2, Loader2, Maximize2, Move, Plus, RotateCcw, RotateCw, Ruler,
-  Share2, SlidersHorizontal, Upload, X,
+  Share2, SlidersHorizontal, Slice, Upload, X,
 } from 'lucide-react';
 import LastViewport from '@/components/last-viewport';
 import ReferenceDimensions from '@/components/reference-dimensions';
 import { ShoeSampleGallery, ShoeSampleQuickbar } from '@/components/shoe-sample-picker';
 import ReferenceCapturePanel from '@/components/reference-capture-panel'; // Changed
+import SectionPanel from '@/components/section-panel'; // Changed
+import type { SectionResult } from '@/lib/section-analysis';
 import type { ReferenceCaptureFunction, ReferenceCaptureImage } from '@/lib/reference-capture-types'; // Changed
 import {
   createDefaultProject, createDefaultLastLayer, MAX_PROJECT_BYTES, PLANE_LABELS, type LastProject, type LastLayer, type ModelInfo,
@@ -128,7 +130,8 @@ export default function Home() {
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState<Notice | null>(null);
   const [modal, setModal] = useState<ModalKind>(null);
-  const [inspector, setInspector] = useState<'view' | 'transform'>('view');
+  const [inspector, setInspector] = useState<'view' | 'transform' | 'section'>('view');
+  const [sectionResult, setSectionResult] = useState<SectionResult | null>(null);
   const [activeModel, setActiveModel] = useState<'shoe' | 'last'>('shoe'); // Changed: independent model controls.
   const [mobilePanel, setMobilePanel] = useState<'sources' | 'settings' | null>(null);
   const [selectedPlane, setSelectedPlane] = useState<PlaneKey>('side');
@@ -527,14 +530,15 @@ export default function Home() {
           <div className="viewport-canvas-area">
             {ready && <LastViewport project={project} onModelInfo={modelChanged} onError={reportError}
               measure={measure} onMeasure={measurementChanged} resetToken={resetToken} screenshotToken={screenshotToken} onModelLoaded={modelLoaded} onRenderMode={setRenderMode} onCaptureReady={captureReady}
-              onLastInfo={setLastInfo} onLastError={reportLastError} onLastLoaded={lastLoaded} />}
+              onLastInfo={setLastInfo} onLastError={reportLastError} onLastLoaded={lastLoaded} onSection={setSectionResult} />}
             <div className="viewport-top-label"><span className="view-dot" /><span>{VIEWS.find(v => v.key === settings.view)?.axis}</span><span className="label-divider" />{settings.orthographic || settings.view !== 'iso' ? '정사영' : '원근 뷰'}{renderMode === 'software' && <span title="이 브라우저에서는 3D 형상을 호환 모드로 표시합니다"> · 호환 렌더링</span>}</div>
             {!project.model && <div className="sample-label">{sampleDefinition.englishName.toUpperCase()}<span>신발 개념 샘플 · 제조 검증 전</span></div>}
             {project.last.enabled && <div className="model-comparison-legend"><span className="shoe-legend-dot" />신발<span className="last-legend-dot" />{lastName}</div>}
             {(!ready || busy) && <div className="loading-overlay"><Loader2 className="spin" size={24} /><span>{busy || '작업 공간을 준비하는 중'}</span></div>}
             {isDragging && <div className="drop-overlay"><Upload size={34} /><strong>여기에 파일을 놓으세요</strong><span>3D 모델 · 프로젝트 · {PLANE_LABELS[selectedPlane].name} 참조 이미지</span></div>}
-            <div className="canvas-actionbar"><button className={referencesVisible ? 'active' : ''} onClick={toggleReferences} aria-pressed={referencesVisible}><Layers size={17} /><span>참조 이미지</span></button><span className="toolbar-separator" /><button className={measure ? 'active' : ''} onClick={() => setMeasure(v => !v)} aria-pressed={measure}><Ruler size={17} /><span>거리 측정</span></button>
-              <span className="toolbar-separator" /><button onClick={() => setModal('capture')} disabled={!ready || !!busy || !captureAvailable}><Camera size={17} /><span>PNG 저장</span></button></div>
+            <div className="canvas-actionbar"><button className={referencesVisible ? 'active' : ''} onClick={toggleReferences} aria-pressed={referencesVisible} aria-label="참조 이미지"><Layers size={17} /><span>참조 이미지</span></button><span className="toolbar-separator" /><button className={measure ? 'active' : ''} onClick={() => setMeasure(v => !v)} aria-pressed={measure} aria-label="거리 측정"><Ruler size={17} /><span>거리 측정</span></button>
+              <span className="toolbar-separator" /><button className={settings.section.enabled ? 'active' : ''} aria-label="단면 검사" aria-pressed={settings.section.enabled} onClick={() => { updateSettings({ section: { ...settings.section, enabled: !settings.section.enabled } }); setInspector('section'); if (window.matchMedia('(max-width: 980px)').matches) setMobilePanel('settings'); }}><Slice size={17} /><span>단면 검사</span></button>
+              <span className="toolbar-separator" /><button aria-label="PNG 저장" onClick={() => setModal('capture')} disabled={!ready || !!busy || !captureAvailable}><Camera size={17} /><span>PNG 저장</span></button></div>
             {measure && <div className="measure-readout" role="status"><Ruler size={15} />{distance === null ? '신발 표면에서 두 점을 선택하세요' : <><strong>{distance.toFixed(2)}</strong> mm<span>다시 선택하면 새로 측정합니다</span></>}</div>}
           </div>
           <div className="viewport-footer"><span className="mouse-hint"><Move size={13} />드래그: 회전<span>·</span>휠: 확대<span>·</span>우클릭: 이동</span>
@@ -553,7 +557,8 @@ export default function Home() {
         <div className="panel-top"><span className="eyebrow">INSPECTOR</span><SlidersHorizontal size={15} className="desktop-only" />
           <button className="icon-button mobile-only" onClick={() => setMobilePanel(null)} aria-label="설정 패널 닫기"><X size={18} /></button></div>
         <div className="inspector-tabs" role="group" aria-label="설정 종류"><button className={inspector === 'view' ? 'active' : ''} onClick={() => setInspector('view')}>보기 설정</button>
-          <button className={inspector === 'transform' ? 'active' : ''} onClick={() => setInspector('transform')}>모델 정렬</button></div>
+          <button className={inspector === 'transform' ? 'active' : ''} onClick={() => setInspector('transform')}>모델 정렬</button>
+          <button className={inspector === 'section' ? 'active' : ''} onClick={() => { setInspector('section'); updateSettings({ section: { ...settings.section, enabled: true } }); }}>단면</button></div>
         {inspector === 'view' ? <>
           <section className="inspector-section"><h2>평면 배치<span className="subtle-icon"><Layers size={15} /></span></h2>
             <RangeField label="면 간격" value={settings.gap} max={120} unit="mm" onChange={gap => updateSettings({ gap })} />
@@ -581,7 +586,7 @@ export default function Home() {
             <Toggle label="신발 와이어프레임" checked={settings.wireframe} onChange={wireframe => updateSettings({ wireframe })} />
             {project.last.enabled && <Toggle label="라스트 와이어프레임" checked={project.last.wireframe} onChange={wireframe => updateLast({ wireframe })} />}
           </section>
-        </> : <>
+        </> : inspector === 'transform' ? <>
           <section className="inspector-section"><h2>정렬할 모델</h2><div className="model-target-tabs" role="group" aria-label="정렬 대상">
             <button className={!editingLast ? 'active' : ''} aria-pressed={!editingLast} onClick={() => setActiveModel('shoe')}>신발</button><button className={editingLast ? 'active' : ''} aria-pressed={editingLast} disabled={!project.last.enabled} onClick={() => setActiveModel('last')}>라스트</button></div>
             <p className="section-description">{editingLast ? lastName : modelName}</p></section>
@@ -608,7 +613,7 @@ export default function Home() {
             {!!targetInfo?.triangles && <p className="section-description">{targetInfo.triangles.toLocaleString('ko-KR')} triangles</p>}
             <button className="button button-outline reset-transform" onClick={() => updateTarget({ position: [0, 0, 0], rotation: [0, 0, 0], scale: 1 })}><RotateCcw size={14} />정렬값 초기화</button>
           </section>
-        </>}
+        </> : <SectionPanel settings={settings.section} result={sectionResult} hasLast={project.last.enabled} onChange={patch => updateSettings({ section: { ...settings.section, ...patch } })} />}
         <div className="inspector-note"><span className="note-symbol">i</span><p>이미지 윤곽과 라스트를 비교하는 도구입니다. 실제 설계에는 치수와 여유 공간을 함께 검토하세요.</p></div>
       </aside>
     </div>

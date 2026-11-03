@@ -13,6 +13,7 @@ import { captureModelReferences } from './reference-capture';
 import type { ReferenceCaptureFunction } from './reference-capture-types';
 import { applyModelLayerTransform } from './model-layer';
 import { getReferenceDisplayBounds, getReferenceFrame, getReferencePlanePose } from './reference-frame';
+import { computeModelSection, type SectionResult } from './section-analysis';
 
 interface SceneCallbacks {
   onModelInfo: (info: ModelInfo) => void;
@@ -24,6 +25,8 @@ interface SceneCallbacks {
   onLastInfo?: (info: ModelInfo | null) => void;
   onLastError?: (message: string) => void;
   onLastLoaded?: (name: string | null) => void;
+  // Changed: exact cross-section results and local errors are separate from imports.
+  onSection?: (result: SectionResult | null) => void;
   onRenderMode?: (mode: 'webgl' | 'software') => void;
   onNotice?: (message: string) => void;
 }
@@ -209,6 +212,8 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
   let modelRevision = 0;
   // Changed: reject pending, superseded, or disposed model captures reliably.
   let modelLoading = false;
+  let modelLoadedRevision = 0;
+  let modelLoadError: string | null = null;
   let modelPoseRevision = 0;
   let captureQueue: Promise<unknown> = Promise.resolve();
   let modelSource: ModelAsset | null | undefined;
@@ -225,6 +230,9 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
   let lastLayerModel: THREE.Group | null = null;
   let lastLayerSource: ModelAsset | null | undefined;
   let lastLayerRevision = 0;
+  let lastLayerLoading = false;
+  let lastLayerLoadedRevision = 0;
+  let lastLayerLoadError: string | null = null;
   let lastLayerSample = true;
   let lastLayerTriangles = 0;
   let lastLayerInfoKey = '';
@@ -242,7 +250,10 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
   let boundsGroup = new THREE.Group();
   let axes = new THREE.Group();
   const measurementGroup = new THREE.Group();
-  scene.add(boundsGroup, axes, measurementGroup);
+  const sectionGuide = new THREE.Group();
+  scene.add(boundsGroup, axes, measurementGroup, sectionGuide);
+  let sectionTimer: number | null = null;
+  let sectionRevision = 0;
   let measuring = false;
   let measurementPoints: THREE.Vector3[] = [];
   let pointerStart: { x: number; y: number } | null = null;
@@ -309,6 +320,76 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     controls.update();
   }
   setupControls();
+
+  // Changed: invalidate measurements immediately, before a debounced calculation
+  // or model load. The guide is a separate scene object, excluded from PNGs/picks.
+  function clearSection(): void {
+    sectionRevision++;
+    if (sectionTimer !== null) window.clearTimeout(sectionTimer);
+    sectionTimer = null;
+    for (const child of [...sectionGuide.children]) disposeObject(child);
+    callbacks.onSection?.(null);
+    invalidate();
+  }
+
+  function sectionError(message: string): SectionResult {
+    const settings = project!.settings.section;
+    const axes = { x: ['y', 'z'], y: ['x', 'z'], z: ['x', 'y'] } as const;
+    const [uAxis, vAxis] = axes[settings.axis];
+    return {
+      axis: settings.axis, percent: settings.percent, coordinate: 0, uAxis, vAxis,
+      shoe: [], last: [], bounds: [0, 0, 0, 0], minimumGap: null,
+      closest: null, intersects: false, error: message,
+    };
+  }
+
+  function updateSectionGuide(result: SectionResult): void {
+    if (result.error) return;
+    const [uMin, vMin, uMax, vMax] = result.bounds;
+    if (![...result.bounds, result.coordinate].every(Number.isFinite) || uMax < uMin || vMax < vMin) return;
+    const point = (u: number, v: number) => {
+      const coordinate = { x: 0, y: 0, z: 0 };
+      coordinate[result.axis] = result.coordinate;
+      coordinate[result.uAxis] = u;
+      coordinate[result.vAxis] = v;
+      return new THREE.Vector3(coordinate.x, coordinate.y, coordinate.z);
+    };
+    const corners = [point(uMin, vMin), point(uMax, vMin), point(uMax, vMax), point(uMin, vMax), point(uMin, vMin)];
+    const outline = new THREE.Line(new THREE.BufferGeometry().setFromPoints(corners), new THREE.LineBasicMaterial({ color: '#cf8a38', transparent: true, opacity: 0.96, depthTest: false }));
+    outline.renderOrder = 15;
+    sectionGuide.add(outline);
+  }
+
+  function requestSection(): void {
+    clearSection();
+    const section = project?.settings.section;
+    if (disposed || !project || !section?.enabled) return;
+    // Changed: a retained old mesh is never analyzed while its requested
+    // replacement is loading or has failed. Hidden enabled Last still counts.
+    if (modelLoading || (project.last.enabled && lastLayerLoading)) return;
+    const error = modelLoadError ?? (project.last.enabled ? lastLayerLoadError : null);
+    if (error) {
+      callbacks.onSection?.(sectionError(`모델을 불러오지 못해 단면 계산을 중단했습니다. ${error}`));
+      return;
+    }
+    if (!model || modelLoadedRevision !== modelRevision || (project.last.enabled && (!lastLayerModel || lastLayerLoadedRevision !== lastLayerRevision))) return;
+    const revision = sectionRevision;
+    const settings = { ...section };
+    sectionTimer = window.setTimeout(() => {
+      sectionTimer = null;
+      if (disposed || revision !== sectionRevision || !project?.settings.section.enabled) return;
+      let result: SectionResult;
+      try {
+        result = computeModelSection(pose, project.last.enabled ? lastPose : null, settings);
+        if (disposed || revision !== sectionRevision) return;
+        updateSectionGuide(result);
+      } catch (error) {
+        result = sectionError(error instanceof Error ? error.message : '현재 형상의 단면을 계산하지 못했습니다.');
+      }
+      callbacks.onSection?.(result);
+      invalidate();
+    }, 100);
+  }
 
   function clearMeasurement(): void {
     measurementPoints = [];
@@ -418,6 +499,8 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
   async function updateModel(asset: ModelAsset | null, sampleKind: ShoeSampleKind): Promise<void> {
     const revision = ++modelRevision;
     modelLoading = true;
+    modelLoadError = null;
+    clearSection();
     callbacks.onLoading(true);
     try {
       const next = await parseLastModel(asset, sampleKind);
@@ -434,15 +517,18 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
       clearMeasurement();
       updateModelTransform();
       fit();
+      modelLoadedRevision = revision;
       callbacks.onModelLoaded?.(asset?.name ?? null);
     } catch (error) {
       if (disposed || revision !== modelRevision) return;
       const message = error instanceof Error ? error.message : '3D 파일을 읽을 수 없습니다.';
+      modelLoadError = message;
       callbacks.onError(message.includes('DRACO') || message.includes('Meshopt') ? '압축을 끈 GLB 또는 STL 파일을 사용해 주세요.' : message);
     } finally {
       if (!disposed && revision === modelRevision) {
         modelLoading = false;
         callbacks.onLoading(false);
+        requestSection();
       }
     }
   }
@@ -482,6 +568,9 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
 
   async function updateLastLayerModel(asset: ModelAsset | null): Promise<void> {
     const revision = ++lastLayerRevision;
+    lastLayerLoading = true;
+    lastLayerLoadError = null;
+    clearSection();
     try {
       const next = await parseLastLayerModel(asset);
       if (disposed || revision !== lastLayerRevision || !project?.last.enabled) { disposeObject(next); return; }
@@ -496,16 +585,27 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
       });
       updateLastLayerTransform();
       fit();
+      lastLayerLoadedRevision = revision;
       callbacks.onLastLoaded?.(asset?.name ?? null);
     } catch (error) {
       if (disposed || revision !== lastLayerRevision) return;
       const message = error instanceof Error ? error.message : 'Last 3D 파일을 읽을 수 없습니다.';
+      lastLayerLoadError = message;
       callbacks.onLastError?.(message.includes('DRACO') || message.includes('Meshopt') ? '압축을 끈 GLB 또는 STL Last 파일을 사용해 주세요.' : message);
+    } finally {
+      if (!disposed && revision === lastLayerRevision) {
+        lastLayerLoading = false;
+        requestSection();
+      }
     }
   }
 
   function removeLastLayer(): void {
     lastLayerRevision++;
+    lastLayerLoading = false;
+    lastLayerLoadError = null;
+    lastLayerLoadedRevision = 0;
+    clearSection();
     if (lastLayerModel) disposeObject(lastLayerModel);
     lastLayerModel = null;
     lastLayerSource = undefined;
@@ -729,11 +829,17 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     // Changed: choosing another built-in shoe is also a new geometry request.
     const sampleChange = next.model === null && s.sampleKind !== previous?.sampleKind;
     const assetChange = modelSource === undefined || next.model !== modelSource || sampleChange;
+    const transformChange = !previous || s.modelScale !== previous.modelScale || s.modelUp !== previous.modelUp || s.modelUnits !== previous.modelUnits || s.modelRotation.some((n, i) => n !== previous.modelRotation[i]) || s.modelPosition.some((n, i) => n !== previous.modelPosition[i]);
+    const lastSourceChange = next.last.enabled && (lastLayerSource === undefined || next.last.model !== lastLayerSource);
+    const previousLast = previousProject?.last;
+    const lastTransformChange = !previousLast || next.last.scale !== previousLast.scale || next.last.units !== previousLast.units || next.last.up !== previousLast.up || next.last.position.some((value, index) => value !== previousLast.position[index]) || next.last.rotation.some((value, index) => value !== previousLast.rotation[index]);
+    const sectionChange = !previous || s.section.enabled !== previous.section.enabled || s.section.axis !== previous.section.axis || s.section.percent !== previous.section.percent;
+    const sectionInputsChanged = assetChange || transformChange || lastSourceChange || next.last.enabled !== previousLast?.enabled || (next.last.enabled && lastTransformChange) || sectionChange;
+    if (sectionInputsChanged) clearSection();
     if (assetChange) {
       modelSource = next.model;
       void updateModel(next.model, s.sampleKind);
     } else {
-      const transformChange = !previous || s.modelScale !== previous.modelScale || s.modelUp !== previous.modelUp || s.modelUnits !== previous.modelUnits || s.modelRotation.some((n, i) => n !== previous.modelRotation[i]) || s.modelPosition.some((n, i) => n !== previous.modelPosition[i]);
       if (transformChange) {
         // Changed: a capture of an older pose cannot be delivered as the new pose.
         modelPoseRevision++;
@@ -748,10 +854,11 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
         removeLastLayer();
         fit();
       }
-    } else if (lastLayerSource === undefined || next.last.model !== lastLayerSource) {
+    } else if (lastSourceChange) {
       lastLayerSource = next.last.model;
       void updateLastLayerModel(next.last.model);
     } else updateLastLayerTransform();
+    if (sectionInputsChanged) requestSection();
     if (!previous || frameChange || s.view !== previous.view || s.orthographic !== previous.orthographic) fit();
     invalidate();
   }
@@ -806,6 +913,7 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     disposed = true;
     modelRevision++;
     lastLayerRevision++;
+    clearSection();
     if (renderRequest) cancelAnimationFrame(renderRequest);
     observer.disconnect();
     controls.removeEventListener('change', invalidate);

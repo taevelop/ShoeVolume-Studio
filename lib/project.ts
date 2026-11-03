@@ -8,6 +8,14 @@ export type PlaneKey = 'side' | 'top' | 'front' | 'rear';
 export type ViewKey = 'iso' | 'side' | 'top' | 'front' | 'rear';
 export type Vec3 = [number, number, number];
 
+// Changed: section selection is saved independently of both model transforms.
+export type SectionAxis = 'x' | 'y' | 'z';
+export interface SectionSettings {
+  enabled: boolean;
+  axis: SectionAxis;
+  percent: number;
+}
+
 export interface ImageAsset {
   name: string;
   dataUrl: string;
@@ -43,6 +51,7 @@ export interface SceneSettings {
   sampleKind: SampleKind; // Changed: stored selection; uploaded model retains priority.
   dimensions: Vec3;
   referenceCenter: Vec3 | null; // Changed: null keeps the original ground-based frame.
+  section: SectionSettings; // Changed
   gap: number;
   imageOpacity: number;
   lastOpacity: number;
@@ -98,6 +107,7 @@ export function createDefaultProject(): LastProject {
     settings: {
       sampleKind: DEFAULT_SAMPLE_KIND, // Changed
       dimensions: [253, 105.31, 79.4], referenceCenter: null, gap: 28, imageOpacity: 0.58,
+      section: { enabled: false, axis: 'x', percent: 66.7 }, // Changed
       lastOpacity: 1, grid: true, axes: true, bounds: false,
       wireframe: false, showLast: true, view: 'iso', orthographic: false,
       modelPosition: [0, 0, 0], modelRotation: [0, 0, 0], modelScale: 1,

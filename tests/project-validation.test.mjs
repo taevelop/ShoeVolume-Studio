@@ -299,3 +299,45 @@ test('rejects non-finite, missing, malformed, or out-of-bounds center coordinate
     assert.throws(() => validateProject(project), /참조면 중심/);
   }
 });
+
+// Changed: section review survives a project round-trip without enabling it in
+// existing files or allowing invalid positions into the geometry calculation.
+test('migrates a missing section configuration without changing legacy content', () => {
+  const legacy = createDefaultProject();
+  delete legacy.settings.section;
+  legacy.settings.referenceCenter = [12, -4, 63];
+  legacy.model = obj;
+  legacy.last.enabled = true;
+  const clean = validateProject(JSON.parse(JSON.stringify(legacy)));
+  assert.deepEqual(clean, {
+    ...legacy,
+    settings: { ...legacy.settings, section: { enabled: false, axis: 'x', percent: 66.7 } },
+  });
+});
+
+test('round-trips section axes and endpoint or fractional percentages', () => {
+  for (const axis of ['x', 'y', 'z']) {
+    for (const percent of [0, 66.7, 100]) {
+      const project = createDefaultProject();
+      project.settings.section = { enabled: percent !== 0, axis, percent };
+      assert.deepEqual(validateProject(JSON.parse(JSON.stringify(project))), project);
+    }
+  }
+});
+
+test('rejects incomplete sections and invalid enabled, axis, or percentage values', () => {
+  for (const section of [null, [], {}, { enabled: false, axis: 'x' }]) {
+    const project = createDefaultProject();
+    project.settings.section = section;
+    assert.throws(() => validateProject(project), /단면/);
+  }
+  for (const update of [
+    { enabled: 1 }, { enabled: 'false' }, { axis: 'X' }, { axis: 'xy' },
+    { percent: Number.NaN }, { percent: Infinity }, { percent: -0.001 },
+    { percent: 100.001 }, { percent: '66.7' },
+  ]) {
+    const project = createDefaultProject();
+    Object.assign(project.settings.section, update);
+    assert.throws(() => validateProject(project), /단면/);
+  }
+});

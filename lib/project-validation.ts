@@ -8,6 +8,7 @@ import {
   type ModelAsset,
   type PlaneKey,
   type SceneSettings,
+  type SectionSettings,
   type Vec3,
 } from './project';
 import { DEFAULT_SAMPLE_KIND, SAMPLE_KINDS } from './shoe-sample-catalog'; // Changed
@@ -62,6 +63,16 @@ function choice<T extends string>(value: unknown, options: readonly T[], label: 
     throw new ProjectValidationError(`${label} 설정을 확인해 주세요.`);
   }
   return value as T;
+}
+
+// Changed: a present section configuration must be complete, even when hidden.
+function validateSectionSettings(input: unknown): SectionSettings {
+  const section = record(input, '단면');
+  return {
+    enabled: boolean(section.enabled, '단면 표시'),
+    axis: choice(section.axis, ['x', 'y', 'z'] as const, '단면 방향'),
+    percent: numeric(section.percent, '단면 위치 비율', 0, 100),
+  };
 }
 
 function dataUrl(value: unknown, allowedTypes: string[], label: string): { url: string; mime: string; size: number; head: string } {
@@ -164,6 +175,9 @@ export function validateProject(input: unknown): LastProject {
     // Changed: missing or null retains legacy center [0, 0, height / 2].
     referenceCenter: raw.referenceCenter === undefined || raw.referenceCenter === null
       ? null : vector(raw.referenceCenter, '참조면 중심', -100000, 100000),
+    // Changed: old version-1 projects keep sections off until explicitly enabled.
+    section: raw.section === undefined
+      ? { enabled: false, axis: 'x', percent: 66.7 } : validateSectionSettings(raw.section),
     gap: numeric(raw.gap, '면 간격', 0, 2000),
     imageOpacity: numeric(raw.imageOpacity, '이미지 불투명도', 0, 1),
     lastOpacity: numeric(raw.lastOpacity, '라스트 불투명도', 0, 1),

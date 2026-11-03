@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { LastProject, ModelInfo } from '@/lib/project';
 import type { LastSceneController } from '@/lib/last-scene';
 import type { ReferenceCaptureFunction } from '@/lib/reference-capture-types';
+import type { SectionResult } from '@/lib/section-analysis';
 
 export interface LastViewportProps {
   project: LastProject;
@@ -16,6 +17,8 @@ export interface LastViewportProps {
   onLastInfo?: (info: ModelInfo | null) => void;
   onLastError?: (message: string) => void;
   onLastLoaded?: (name: string | null) => void;
+  // Changed: debounce, pending clears, and section errors use one isolated channel.
+  onSection?: (result: SectionResult | null) => void;
   onRenderMode?: (mode: 'webgl' | 'software') => void;
   // Changed: parents can request reference PNGs once the scene is available.
   onCaptureReady?: (capture: ReferenceCaptureFunction | null) => void;
@@ -23,16 +26,16 @@ export interface LastViewportProps {
   screenshotToken: number;
 }
 
-export default function LastViewport({ project, onModelInfo, onError, measure, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onRenderMode, onCaptureReady, resetToken, screenshotToken }: LastViewportProps) {
+export default function LastViewport({ project, onModelInfo, onError, measure, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onSection, onRenderMode, onCaptureReady, resetToken, screenshotToken }: LastViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<LastSceneController | null>(null);
-  const callbacksRef = useRef({ onModelInfo, onError, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onRenderMode, onCaptureReady });
+  const callbacksRef = useRef({ onModelInfo, onError, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onSection, onRenderMode, onCaptureReady });
   const projectRef = useRef(project);
   const measureRef = useRef(measure);
   const [loading, setLoading] = useState(true);
   const [fatalError, setFatalError] = useState<string | null>(null);
   const [renderNotice, setRenderNotice] = useState<string | null>(null);
-  callbacksRef.current = { onModelInfo, onError, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onRenderMode, onCaptureReady };
+  callbacksRef.current = { onModelInfo, onError, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onSection, onRenderMode, onCaptureReady };
   projectRef.current = project;
   measureRef.current = measure;
 
@@ -50,6 +53,7 @@ export default function LastViewport({ project, onModelInfo, onError, measure, o
         onLastInfo: (info) => callbacksRef.current.onLastInfo?.(info),
         onLastError: (message) => callbacksRef.current.onLastError?.(message),
         onLastLoaded: (name) => callbacksRef.current.onLastLoaded?.(name),
+        onSection: (result) => callbacksRef.current.onSection?.(result),
         onRenderMode: (mode) => callbacksRef.current.onRenderMode?.(mode),
         onNotice: setRenderNotice,
         // Changed: capture is available only after the requested model finishes
