@@ -25,6 +25,10 @@ interface SceneCallbacks {
   onLastInfo?: (info: ModelInfo | null) => void;
   onLastError?: (message: string) => void;
   onLastLoaded?: (name: string | null) => void;
+  onLastLoading?: (loading: boolean) => void;
+  // Changed: saved-version overlays have an independent loading/error channel.
+  onComparisonLoading?: (loading: boolean) => void;
+  onComparisonError?: (message: string) => void;
   // Changed: exact cross-section results and local errors are separate from imports.
   onSection?: (result: SectionResult | null) => void;
   onRenderMode?: (mode: 'webgl' | 'software') => void;
@@ -33,6 +37,7 @@ interface SceneCallbacks {
 
 export interface LastSceneController {
   setProject: (project: LastProject) => void;
+  setComparison: (project: LastProject | null) => void;
   setMeasure: (enabled: boolean) => void;
   fit: () => void;
   screenshot: () => void;
@@ -174,6 +179,77 @@ export async function parseLastLayerModel(asset: ModelAsset | null): Promise<THR
   return root;
 }
 
+export interface ComparisonModels {
+  root: THREE.Group;
+  shoe: THREE.Group;
+  last: THREE.Group | null;
+}
+
+// Changed: comparison models are freshly parsed from a saved recipe and own all
+// their resources. They never borrow the current scene's meshes or materials.
+export async function createComparisonModels(snapshot: LastProject): Promise<ComparisonModels> {
+  const settings: LastProject['settings'] = {
+    ...snapshot.settings, sampleShape: { ...snapshot.settings.sampleShape },
+    modelPosition: [...snapshot.settings.modelPosition], modelRotation: [...snapshot.settings.modelRotation],
+  };
+  const lastSettings: LastProject['last'] = { ...snapshot.last, position: [...snapshot.last.position], rotation: [...snapshot.last.rotation] };
+  const shoeAsset = snapshot.model;
+  const tasks: [Promise<THREE.Group>, Promise<THREE.Group | null>] = [
+    parseLastModel(shoeAsset, settings.sampleKind, settings.sampleShape),
+    lastSettings.enabled ? parseLastLayerModel(lastSettings.model) : Promise.resolve(null),
+  ];
+  // Wait for both parsers even if one fails, so every successful sibling can be
+  // disposed rather than leaking after an early Promise.all rejection.
+  const results = await Promise.allSettled(tasks);
+  const [shoeResult, lastResult] = results;
+  if (shoeResult.status === 'rejected' || lastResult.status === 'rejected') {
+    for (const result of results) if (result.status === 'fulfilled' && result.value) disposeObject(result.value);
+    const reason: unknown = shoeResult.status === 'rejected' ? shoeResult.reason : lastResult.status === 'rejected' ? lastResult.reason : null;
+    throw reason instanceof Error ? reason : new Error('저장된 비교 모델을 읽을 수 없습니다.');
+  }
+  const root = new THREE.Group();
+  root.name = 'Saved-version comparison';
+  root.userData.comparison = true;
+  root.add(shoeResult.value);
+  if (lastResult.value) root.add(lastResult.value);
+  const replacedMaterials = new Set<THREE.Material>();
+  try {
+    const addLayer = (model: THREE.Group, name: string, transform: Pick<LastProject['last'], 'position' | 'rotation' | 'scale' | 'units' | 'up'>, sample: boolean): THREE.Group => {
+      const pose = new THREE.Group(), normalization = new THREE.Group(), sourceAxis = new THREE.Group();
+      pose.name = name;
+      root.add(pose);
+      pose.add(normalization); normalization.add(sourceAxis); sourceAxis.add(model);
+      applyModelLayerTransform({ pose, normalization, sourceAxis }, transform, sample);
+      // Stored view visibility is intentionally ignored at this top-level pose;
+      // original hidden mesh/group children retain their authored visibility.
+      pose.visible = true;
+      return pose;
+    };
+    const shoe = addLayer(shoeResult.value, 'Comparison shoe', {
+      position: settings.modelPosition, rotation: settings.modelRotation, scale: settings.modelScale,
+      units: settings.modelUnits, up: settings.modelUp,
+    }, shoeAsset === null);
+    const last = lastResult.value ? addLayer(lastResult.value, 'Comparison Last', lastSettings, lastSettings.model === null) : null;
+    root.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      const originals: THREE.Material[] = Array.isArray(child.material) ? child.material : [child.material];
+      originals.forEach((material) => replacedMaterials.add(material));
+      child.material = new THREE.MeshStandardMaterial({ color: '#9875bd', opacity: 0.30, transparent: true, depthWrite: false, side: THREE.DoubleSide, roughness: 0.78, metalness: 0 });
+      if (child instanceof THREE.InstancedMesh) child.instanceColor = null;
+      child.castShadow = false;
+      child.receiveShadow = false;
+    });
+    replacedMaterials.forEach(disposeMaterial);
+    replacedMaterials.clear();
+    root.updateMatrixWorld(true);
+    return { root, shoe, last };
+  } catch (error) {
+    replacedMaterials.forEach(disposeMaterial);
+    disposeObject(root);
+    throw error;
+  }
+}
+
 export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks): LastSceneController {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color('#f3f4f0');
@@ -245,6 +321,12 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
   lastNormalization.add(lastSourceAxis);
   lastPose.visible = false;
   scene.add(lastPose);
+  // Changed: comparison is a sibling of current models and guides, so export,
+  // surface picks, and section analysis keep their existing current-only roots.
+  let comparisonRoot: THREE.Group | null = null;
+  let comparisonSource: LastProject | null | undefined;
+  let comparisonRevision = 0;
+  let comparisonPending = false;
   const referenceRoot = new THREE.Group();
   scene.add(referenceRoot);
   const references = new Map<PlaneKey, ReferencePlane>();
@@ -571,6 +653,7 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
   async function updateLastLayerModel(asset: ModelAsset | null): Promise<void> {
     const revision = ++lastLayerRevision;
     lastLayerLoading = true;
+    callbacks.onLastLoading?.(true);
     lastLayerLoadError = null;
     clearSection();
     try {
@@ -597,6 +680,7 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     } finally {
       if (!disposed && revision === lastLayerRevision) {
         lastLayerLoading = false;
+        callbacks.onLastLoading?.(false);
         requestSection();
       }
     }
@@ -605,6 +689,7 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
   function removeLastLayer(): void {
     lastLayerRevision++;
     lastLayerLoading = false;
+    callbacks.onLastLoading?.(false);
     lastLayerLoadError = null;
     lastLayerLoadedRevision = 0;
     clearSection();
@@ -616,6 +701,46 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     lastPose.visible = false;
     callbacks.onLastInfo?.(null);
     invalidate();
+  }
+
+  // Changed: switching or disabling a baseline removes its old ghost at once.
+  // Parsing and errors are independent from current-model imports and metrics.
+  function setComparison(snapshot: LastProject | null): void {
+    if (disposed) return;
+    if (snapshot === comparisonSource && (comparisonPending || comparisonRoot !== null || snapshot === null)) return;
+    comparisonSource = snapshot;
+    const revision = ++comparisonRevision;
+    if (comparisonRoot) disposeObject(comparisonRoot);
+    comparisonRoot = null;
+    comparisonPending = snapshot !== null;
+    callbacks.onComparisonLoading?.(comparisonPending);
+    invalidate();
+    if (snapshot) void loadComparison(snapshot, revision);
+  }
+
+  async function loadComparison(snapshot: LastProject, revision: number): Promise<void> {
+    let nextRoot: THREE.Group | null = null;
+    try {
+      const next = await createComparisonModels(snapshot);
+      nextRoot = next.root;
+      if (disposed || revision !== comparisonRevision) { disposeObject(nextRoot); return; }
+      comparisonRoot = nextRoot;
+      scene.add(comparisonRoot);
+      fit();
+      invalidate();
+    } catch (error) {
+      if (nextRoot) {
+        if (comparisonRoot === nextRoot) comparisonRoot = null;
+        disposeObject(nextRoot);
+      }
+      if (disposed || revision !== comparisonRevision) return;
+      callbacks.onComparisonError?.(error instanceof Error ? error.message : '저장된 비교 모델을 불러오지 못했습니다.');
+    } finally {
+      if (!disposed && revision === comparisonRevision) {
+        comparisonPending = false;
+        callbacks.onComparisonLoading?.(false);
+      }
+    }
   }
 
   function referenceSize(key: PlaneKey): [number, number] {
@@ -764,6 +889,7 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     if (model && pose.visible) box.union(new THREE.Box3().setFromObject(pose));
     // Changed: fitting includes both visible model layers in the same workspace.
     if (lastLayerModel && lastPose.visible) box.union(new THREE.Box3().setFromObject(lastPose));
+    if (comparisonRoot) box.union(new THREE.Box3().setFromObject(comparisonRoot));
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     const radius = size.length() / 2;
@@ -940,6 +1066,10 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     disposed = true;
     modelRevision++;
     lastLayerRevision++;
+    comparisonRevision++;
+    comparisonPending = false;
+    callbacks.onLastLoading?.(false);
+    callbacks.onComparisonLoading?.(false);
     clearSection();
     if (renderRequest) cancelAnimationFrame(renderRequest);
     observer.disconnect();
@@ -955,7 +1085,9 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     if (renderer instanceof THREE.WebGLRenderer) renderer.forceContextLoss();
     renderer.domElement.remove();
     references.clear();
+    comparisonRoot = null;
+    comparisonSource = null;
   }
 
-  return { setProject, setMeasure, fit, screenshot, captureReferences, exportStl, dispose };
+  return { setProject, setComparison, setMeasure, fit, screenshot, captureReferences, exportStl, dispose };
 }

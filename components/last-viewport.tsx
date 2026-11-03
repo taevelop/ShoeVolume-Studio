@@ -8,6 +8,10 @@ import type { SectionResult } from '@/lib/section-analysis';
 
 export interface LastViewportProps {
   project: LastProject;
+  // Changed: saved versions are a temporary independent visual overlay.
+  comparisonProject?: LastProject | null;
+  onComparisonLoading?: (loading: boolean) => void;
+  onComparisonError?: (message: string) => void;
   onModelInfo: (info: ModelInfo) => void;
   onError: (message: string) => void;
   measure: boolean;
@@ -17,6 +21,7 @@ export interface LastViewportProps {
   onLastInfo?: (info: ModelInfo | null) => void;
   onLastError?: (message: string) => void;
   onLastLoaded?: (name: string | null) => void;
+  onLastLoading?: (loading: boolean) => void;
   // Changed: debounce, pending clears, and section errors use one isolated channel.
   onSection?: (result: SectionResult | null) => void;
   onRenderMode?: (mode: 'webgl' | 'software') => void;
@@ -28,17 +33,19 @@ export interface LastViewportProps {
   screenshotToken: number;
 }
 
-export default function LastViewport({ project, onModelInfo, onError, measure, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onSection, onRenderMode, onCaptureReady, onStlReady, resetToken, screenshotToken }: LastViewportProps) {
+export default function LastViewport({ project, comparisonProject = null, onComparisonLoading, onComparisonError, onModelInfo, onError, measure, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onLastLoading, onSection, onRenderMode, onCaptureReady, onStlReady, resetToken, screenshotToken }: LastViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<LastSceneController | null>(null);
-  const callbacksRef = useRef({ onModelInfo, onError, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onSection, onRenderMode, onCaptureReady, onStlReady });
+  const callbacksRef = useRef({ onModelInfo, onError, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onLastLoading, onComparisonLoading, onComparisonError, onSection, onRenderMode, onCaptureReady, onStlReady });
   const projectRef = useRef(project);
+  const comparisonRef = useRef(comparisonProject);
   const measureRef = useRef(measure);
   const [loading, setLoading] = useState(true);
   const [fatalError, setFatalError] = useState<string | null>(null);
   const [renderNotice, setRenderNotice] = useState<string | null>(null);
-  callbacksRef.current = { onModelInfo, onError, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onSection, onRenderMode, onCaptureReady, onStlReady };
+  callbacksRef.current = { onModelInfo, onError, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onLastLoading, onComparisonLoading, onComparisonError, onSection, onRenderMode, onCaptureReady, onStlReady };
   projectRef.current = project;
+  comparisonRef.current = comparisonProject;
   measureRef.current = measure;
 
   useEffect(() => {
@@ -55,6 +62,9 @@ export default function LastViewport({ project, onModelInfo, onError, measure, o
         onLastInfo: (info) => callbacksRef.current.onLastInfo?.(info),
         onLastError: (message) => callbacksRef.current.onLastError?.(message),
         onLastLoaded: (name) => callbacksRef.current.onLastLoaded?.(name),
+        onLastLoading: (pending) => callbacksRef.current.onLastLoading?.(pending),
+        onComparisonLoading: (pending) => callbacksRef.current.onComparisonLoading?.(pending),
+        onComparisonError: (message) => callbacksRef.current.onComparisonError?.(message),
         onSection: (result) => callbacksRef.current.onSection?.(result),
         onRenderMode: (mode) => callbacksRef.current.onRenderMode?.(mode),
         onNotice: setRenderNotice,
@@ -68,6 +78,7 @@ export default function LastViewport({ project, onModelInfo, onError, measure, o
       });
       controllerRef.current = controller;
       controller.setProject(projectRef.current);
+      controller.setComparison(comparisonRef.current);
       controller.setMeasure(measureRef.current);
     }).catch(() => {
       if (cancelled) return;
@@ -87,6 +98,7 @@ export default function LastViewport({ project, onModelInfo, onError, measure, o
   }, []);
 
   useEffect(() => { controllerRef.current?.setProject(project); }, [project]);
+  useEffect(() => { controllerRef.current?.setComparison(comparisonProject); }, [comparisonProject]);
   useEffect(() => { controllerRef.current?.setMeasure(measure); }, [measure]);
   useEffect(() => { if (resetToken > 0) controllerRef.current?.fit(); }, [resetToken]);
   useEffect(() => { if (screenshotToken > 0) controllerRef.current?.screenshot(); }, [screenshotToken]);

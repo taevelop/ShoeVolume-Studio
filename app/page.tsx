@@ -1,11 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, CSSProperties, ReactNode } from 'react';
 import {
   ArrowUpRight, Box, Camera, Check, ChevronDown, CircleHelp, Copy, Download,
   Eye, EyeOff, FileJson, FlipHorizontal2, FolderOpen, Grid3X3, Image as ImageIcon,
-  Layers, Link2, Loader2, Maximize2, Move, Plus, RotateCcw, RotateCw, Ruler,
+  History, Layers, Link2, Loader2, Maximize2, Move, Plus, RotateCcw, RotateCw, Ruler,
   Share2, SlidersHorizontal, Slice, Upload, X,
 } from 'lucide-react';
 import LastViewport from '@/components/last-viewport';
@@ -13,6 +13,7 @@ import ReferenceDimensions from '@/components/reference-dimensions';
 import { ShoeSampleGallery, ShoeSampleQuickbar } from '@/components/shoe-sample-picker';
 import ReferenceCapturePanel from '@/components/reference-capture-panel'; // Changed
 import SectionPanel from '@/components/section-panel'; // Changed
+import DesignVersionsPanel, { type VersionComparison } from '@/components/design-versions-panel';
 import type { SectionResult } from '@/lib/section-analysis';
 import type { ReferenceCaptureFunction, ReferenceCaptureImage } from '@/lib/reference-capture-types'; // Changed
 import {
@@ -29,6 +30,8 @@ import { REFERENCE_DIMENSIONS } from '@/lib/reference-data';
 import { SHOE_SAMPLES, DEFAULT_SAMPLE_KIND, type SampleKind } from '@/lib/shoe-sample-catalog';
 import { estimateProjectBytes } from '@/lib/project-validation'; // Changed
 import { applyCapturedReferences } from '@/lib/reference-registration'; // Changed
+import { saveRestoreBackup } from '@/lib/design-versions';
+import { compareProjects } from '@/lib/project-diff';
 
 const PLANE_KEYS: PlaneKey[] = ['side', 'top', 'front', 'rear'];
 const VIEWS: { key: ViewKey; label: string; axis: string }[] = [
@@ -43,7 +46,7 @@ const SHAPE_FIELDS: { key: keyof SampleShape; label: string }[] = [
   { key: 'toeHeightDelta', label: '앞코 높이 변화' },
   { key: 'instepHeightDelta', label: '발등 높이 변화' },
 ];
-type ModalKind = 'share' | 'help' | 'references' | 'dimensions' | 'samples' | 'capture' | 'reset' | null; // Changed
+type ModalKind = 'share' | 'help' | 'references' | 'dimensions' | 'samples' | 'capture' | 'versions' | 'reset' | null; // Changed
 type Notice = { message: string; type: 'success' | 'error' };
 
 function NumberField({ label, value, onChange, min = -10000, max = 10000, step = 1, suffix }: {
@@ -144,6 +147,9 @@ export default function Home() {
   const [selectedPlane, setSelectedPlane] = useState<PlaneKey>('side');
   const [modelInfo, setModelInfo] = useState<ModelInfo>({ dimensions: [253, 105.31, 79.4], triangles: 0, sample: true });
   const [lastInfo, setLastInfo] = useState<ModelInfo | null>(null);
+  const [lastLoading, setLastLoading] = useState(false);
+  const [comparison, setComparison] = useState<VersionComparison | null>(null);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
   const [renderMode, setRenderMode] = useState<'webgl' | 'software'>('webgl');
   const [measure, setMeasure] = useState(false);
   const [distance, setDistance] = useState<number | null>(null);
@@ -188,6 +194,9 @@ export default function Home() {
     previousLast.current = null;
     setProject(current => ({ ...current, last: fallback }));
     notify(message, 'error');
+  }, [notify]);
+  const reportComparisonError = useCallback((message: string) => {
+    setComparison(null); notify(message, 'error');
   }, [notify]);
   const measurementChanged = useCallback((n: number | null) => setDistance(n), []);
   // Changed: keep the renderer API stable while the export dialog owns its previews.
@@ -371,6 +380,25 @@ export default function Home() {
     finally { if (mounted.current) setStlPending(false); }
   }
 
+  // Changed: restoration is reversible even when the version list is full.
+  async function restoreDesign(next: LastProject, label: string, isActive: () => boolean) {
+    const snapshot = currentProject.current;
+    await saveRestoreBackup(snapshot);
+    if (!mounted.current || !isActive()) return;
+    if (currentProject.current !== snapshot) throw new Error('백업 중 현재 작업이 변경되어 복원을 취소했습니다. 다시 불러와 주세요.');
+    const modelChanges = next.model !== snapshot.model || (!next.model && (next.settings.sampleKind !== snapshot.settings.sampleKind || SHAPE_FIELDS.some(({ key }) => next.settings.sampleShape[key] !== snapshot.settings.sampleShape[key])));
+    previousModel.current = modelChanges ? { model: snapshot.model, settings: snapshot.settings } : null;
+    previousLast.current = next.last.enabled && (!snapshot.last.enabled || next.last.model !== snapshot.last.model) ? snapshot.last : null;
+    setProject(next); setComparison(null); setMeasure(false); setDistance(null); setResetToken(value => value + 1); setModal(null);
+    window.history.replaceState(null, '', window.location.pathname);
+    notify(`‘${label}’을 불러왔습니다. 이전 작업은 ‘버전 → 복원 전 작업 복구’에 보관했습니다.`);
+  }
+
+  function compareVersion(next: VersionComparison) {
+    setComparison(next); setModal(null); setInspector('view'); setMobilePanel(null);
+    notify(`‘${next.version.name}’을 보라색으로 겹쳐 표시합니다. 불투명도를 조절해 비교하세요.`);
+  }
+
   function selectImage(key: PlaneKey) { uploadPlane.current = key; imageInput.current?.click(); }
 
   function chooseSample(kind: SampleKind) {
@@ -440,7 +468,7 @@ export default function Home() {
     setModal(null);
     await runTask('기준 이미지와 샘플을 불러오는 중', async () => {
       const next = await createReferenceProject();
-      setProject(next); setMeasure(false); setDistance(null); setResetToken(n => n + 1);
+      setProject(next); setComparison(null); setMeasure(false); setDistance(null); setResetToken(n => n + 1);
       window.history.replaceState(null, '', window.location.pathname);
       notify('제공된 치수와 네 방향 이미지로 초기화했습니다.');
     });
@@ -464,6 +492,7 @@ export default function Home() {
   const referencesVisible = PLANE_KEYS.some(key => project.planes[key].visible);
   const selected = project.planes[selectedPlane];
   const importedCount = PLANE_KEYS.filter(key => project.planes[key].image).length;
+  const comparisonChanges = useMemo(() => comparison ? compareProjects(comparison.project, project) : [], [comparison, project]);
 
   return <div className="studio-app">
     <input ref={modelInput} type="file" accept=".stl,.obj,.glb" className="hidden-input" onChange={e => void acceptFile(e, 'model')} />
@@ -476,6 +505,7 @@ export default function Home() {
       <div className="header-divider" />
       <div className="header-project"><span className="tiny-dot" /><span>형상 검토</span><span className="version-pill">BETA</span></div>
       <nav className="header-actions" aria-label="프로젝트 작업">
+        <button className="button button-quiet" aria-label="버전" onClick={() => setModal('versions')} disabled={!ready || !!busy}><History size={16} /><span>버전</span></button>
         <button className="button button-quiet" onClick={() => projectInput.current?.click()} disabled={!!busy}><FolderOpen size={16} /><span>열기</span></button>
         <button className="button button-outline save-button" onClick={exportFile} disabled={!ready || !!busy}><Download size={16} /><span>파일 저장</span></button>
         <button className="button button-primary" onClick={() => setModal('share')} disabled={!ready || !!busy}><Share2 size={16} /><span>공유</span></button>
@@ -539,6 +569,7 @@ export default function Home() {
         <div className="mobile-panel-buttons"><button className="button button-outline" onClick={() => setMobilePanel('sources')}><Layers size={16} />모델·이미지</button>
           <button className="button button-outline" onClick={() => setMobilePanel('settings')}><SlidersHorizontal size={16} />보기·정렬</button></div>
         <ShoeSampleQuickbar selected={project.model ? null : sampleDefinition.id} disabled={!ready || !!busy} onSelect={chooseSample} onDetails={() => setModal('samples')} />
+        {comparison && <div className="comparison-banner" role="status"><span className="comparison-dot" /><div><strong>{comparison.version.name}<span> ↔ 현재 설계</span></strong><p>{comparisonLoading ? '저장본 모델을 준비하고 있습니다…' : `변경된 설정 ${comparisonChanges.length}개 · 단면·PNG·STL은 현재 설계 기준`}</p></div><button className="text-button" onClick={() => setModal('versions')}>변경값 보기</button><button className="icon-button" aria-label="버전 비교 종료" onClick={() => setComparison(null)}><X size={16} /></button></div>}
         <div className="viewport-shell" ref={stageRef}
           onDragEnter={e => { e.preventDefault(); if (e.dataTransfer.types.includes('Files')) { dragCount.current++; setIsDragging(true); } }}
           onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
@@ -555,10 +586,11 @@ export default function Home() {
           <div className="viewport-canvas-area">
             {ready && <LastViewport project={project} onModelInfo={modelChanged} onError={reportError}
               measure={measure} onMeasure={measurementChanged} resetToken={resetToken} screenshotToken={screenshotToken} onModelLoaded={modelLoaded} onRenderMode={setRenderMode} onCaptureReady={captureReady}
-              onLastInfo={setLastInfo} onLastError={reportLastError} onLastLoaded={lastLoaded} onSection={setSectionResult} onStlReady={stlReady} />}
+              onLastInfo={setLastInfo} onLastError={reportLastError} onLastLoaded={lastLoaded} onLastLoading={setLastLoading} onSection={setSectionResult} onStlReady={stlReady}
+              comparisonProject={comparison?.project ?? null} onComparisonLoading={setComparisonLoading} onComparisonError={reportComparisonError} />}
             <div className="viewport-top-label"><span className="view-dot" /><span>{VIEWS.find(v => v.key === settings.view)?.axis}</span><span className="label-divider" />{settings.orthographic || settings.view !== 'iso' ? '정사영' : '원근 뷰'}{renderMode === 'software' && <span title="이 브라우저에서는 3D 형상을 호환 모드로 표시합니다"> · 호환 렌더링</span>}</div>
             {!project.model && <div className="sample-label">{sampleDefinition.englishName.toUpperCase()}<span>신발 개념 샘플 · 제조 검증 전</span></div>}
-            {project.last.enabled && <div className="model-comparison-legend"><span className="shoe-legend-dot" />신발<span className="last-legend-dot" />{lastName}</div>}
+            {(project.last.enabled || comparison) && <div className="model-comparison-legend"><span className="shoe-legend-dot" />현재 신발{project.last.enabled && <><span className="last-legend-dot" />{lastName}</>}{comparison && <><span className="comparison-dot" />저장본</>}</div>}
             {(!ready || busy) && <div className="loading-overlay"><Loader2 className="spin" size={24} /><span>{busy || '작업 공간을 준비하는 중'}</span></div>}
             {isDragging && <div className="drop-overlay"><Upload size={34} /><strong>여기에 파일을 놓으세요</strong><span>3D 모델 · 프로젝트 · {PLANE_LABELS[selectedPlane].name} 참조 이미지</span></div>}
             <div className="canvas-actionbar"><button className={referencesVisible ? 'active' : ''} onClick={toggleReferences} aria-pressed={referencesVisible} aria-label="참조 이미지"><Layers size={17} /><span>참조 이미지</span></button><span className="toolbar-separator" /><button className={measure ? 'active' : ''} onClick={() => setMeasure(v => !v)} aria-pressed={measure} aria-label="거리 측정"><Ruler size={17} /><span>거리 측정</span></button>
@@ -671,15 +703,19 @@ export default function Home() {
     </Dialog>
     <Dialog open={modal === 'help'} title="Last Studio 사용 가이드" onClose={() => setModal(null)}>
       <p className="dialog-description">네 방향의 이미지, 신발, 라스트를 같은 좌표계에서 검토합니다.</p>
-      <ol className="guide-steps"><li><span>01</span><div><h3>신발과 라스트를 추가합니다</h3><p>신발 5종을 선택하거나 신발 파일을 불러오세요. 왼쪽 ‘라스트 불러오기’로 신골을 별도로 추가합니다. GLB는 미터·Y축, STL은 mm·Z축을 기본으로 제안합니다. 실제 파일의 단위와 축을 확인하세요.</p></div></li>
-        <li><span>02</span><div><h3>각 방향의 이미지를 배치합니다</h3><p>측면·윗면·정면·후면을 선택해 이미지를 넣으세요. 대상 외곽에 맞춰 자른 정사영 이미지가 비교하기 좋습니다.</p></div></li>
-        <li><span>03</span><div><h3>크기와 위치를 맞춥니다</h3><p>‘모델 정렬’에서 신발 또는 라스트를 선택해 위치·회전·균일 배율을 각각 조절합니다. ‘보기 설정’의 두 불투명도 조절로 겹쳐진 형상을 비교하세요.</p></div></li>
-        <li><span>04</span><div><h3>이미지를 캡처하고 프로젝트를 공유합니다</h3><p>‘PNG 저장’에서 모델의 네 방향 이미지를 개별 PNG 또는 ZIP으로 저장하세요. ‘공유’에서는 현재 프로젝트의 링크를 만들 수 있고, 프로젝트 파일은 ‘열기’로 복원합니다.</p></div></li></ol>
+      <ol className="guide-steps"><li><span>01</span><div><h3>신발과 라스트를 함께 배치합니다</h3><p>신발 5종을 선택하거나 신발 파일을 불러온 뒤, ‘라스트 불러오기’로 신골을 별도로 추가하세요. 오른쪽 ‘정렬’에서 두 모델의 위치·회전·배율을 각각 맞추고 ‘보기’에서 불투명도를 조절합니다. 실제 파일의 단위와 위쪽 축도 확인하세요.</p></div></li>
+        <li><span>02</span><div><h3>네 방향 이미지를 참조면에 적용합니다</h3><p>‘PNG 저장’에서 측면·윗면·정면·후면을 생성하고 ‘4면 참조로 적용’을 누르면 캡처 위치와 크기에 맞춰 네 면이 배치됩니다. 개별 PNG와 ZIP으로 저장하거나 직접 준비한 정사영 이미지를 넣을 수도 있습니다.</p></div></li>
+        <li><span>03</span><div><h3>단면과 두 모델 사이 간격을 봅니다</h3><p>오른쪽 ‘단면’에서 X·Y·Z 방향과 절단 위치를 선택하세요. 신발과 라스트의 단면 윤곽, 단면 안의 최소 경계 간격을 확인할 수 있습니다. 이 값은 전체 표면 간격이나 착화 적합성을 뜻하지 않습니다.</p></div></li>
+        <li><span>04</span><div><h3>샘플의 국부 치수를 조절합니다</h3><p>오른쪽 ‘치수’에서 길이·발볼 폭·뒤꿈치 폭·앞코 높이·발등 높이를 편집하세요. 내장 신발 5종에 적용되며, 수정한 현재 모델은 STL로 내보낼 수 있습니다. 불러온 파일과 라스트는 이 편집의 대상이 아닙니다.</p></div></li>
+        <li><span>05</span><div><h3>설계안을 저장하고 비교·공유합니다</h3><p>상단 ‘버전’에서 이름을 붙여 저장한 뒤 ‘겹쳐 비교’로 보라색 저장본과 현재 설계를 비교하세요. 버전을 불러오기 전 작업은 자동 백업됩니다. 버전 목록은 이 브라우저에 보관되며, 다른 사람에게는 ‘공유’ 링크나 프로젝트 파일로 현재 설계를 전달하세요.</p></div></li></ol>
       <div className="guide-note"><Ruler size={18} /><p>거리 측정은 모델 표면의 두 점 사이 직선거리입니다. 둘레·곡면 길이나 착화 적합성을 판정하지 않습니다.</p></div>
       <div className="guide-note"><ImageIcon size={18} /><p>기본 이미지는 제공된 치수표의 도면 영역입니다. 신발 5종은 독립적인 개념 샘플이며, 참조 사진이나 실제 라스트를 복원한 형상이 아닙니다.</p></div>
     </Dialog>
     <Dialog open={modal === 'samples'} title="신발 샘플 컬렉션 · 5종" onClose={() => setModal(null)} wide>
       <ShoeSampleGallery selected={project.model ? null : sampleDefinition.id} disabled={!ready || !!busy} onSelect={chooseSample} />
+    </Dialog>
+    <Dialog open={modal === 'versions'} title="설계 버전 · 저장과 비교" onClose={() => setModal(null)} wide>
+      {modal === 'versions' && <DesignVersionsPanel project={project} canSave={ready && !busy && captureAvailable && !lastLoading} comparison={comparison} onRestore={restoreDesign} onCompare={compareVersion} onStopComparison={() => setComparison(null)} />}
     </Dialog>
     {/* Changed: mount only while open, so captured PNG previews are released on close. */}
     <Dialog open={modal === 'capture'} title="모델 참조 이미지 · PNG" onClose={() => setModal(null)} wide>
