@@ -12,6 +12,7 @@ import { DEFAULT_SAMPLE_KIND, type ShoeSampleKind } from './shoe-sample-catalog'
 import { captureModelReferences } from './reference-capture';
 import type { ReferenceCaptureFunction } from './reference-capture-types';
 import { applyModelLayerTransform } from './model-layer';
+import { getReferenceDisplayBounds, getReferenceFrame, getReferencePlanePose } from './reference-frame';
 
 interface SceneCallbacks {
   onModelInfo: (info: ModelInfo) => void;
@@ -569,7 +570,7 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
       for (const ref of references.values()) disposeObject(ref.group);
       references.clear();
     }
-    const [l, w, h] = project.settings.dimensions;
+    const frame = getReferenceFrame(project.settings.dimensions, project.settings.referenceCenter);
     const gap = project.settings.gap;
     for (const key of ['side', 'top', 'front', 'rear'] as const) {
       const existed = references.has(key);
@@ -580,19 +581,11 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
       ref.edge.material.opacity = Math.max(0.25, project.settings.imageOpacity * 0.9);
       ref.image.scale.x = Math.abs(ref.image.scale.x) * (state.flip ? -1 : 1);
       if (existed && previousProject?.planes[key].image?.dataUrl !== state.image?.dataUrl) updateReferenceTexture(ref);
-      if (key === 'side') {
-        ref.group.position.set(0, -w / 2 - gap, h / 2);
-        ref.group.rotation.set(Math.PI / 2, 0, 0);
-      } else if (key === 'top') {
-        ref.group.position.set(0, 0, h + gap);
-        ref.group.rotation.set(0, 0, 0);
-      } else {
-        ref.group.position.set((l / 2 + gap) * (key === 'front' ? 1 : -1), 0, h / 2);
-        const right = new THREE.Vector3(0, key === 'front' ? 1 : -1, 0);
-        const up = new THREE.Vector3(0, 0, 1);
-        const normal = new THREE.Vector3(key === 'front' ? 1 : -1, 0, 0);
-        ref.group.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, up, normal));
-      }
+      // Changed: translate the complete image frame; no cropping or rescaling of
+      // captured content is needed when its physical frame dimensions are stored.
+      const placement = getReferencePlanePose(frame, key, gap);
+      ref.group.position.copy(placement.position);
+      ref.group.quaternion.copy(placement.quaternion);
     }
     invalidate();
   }
@@ -605,18 +598,19 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     axes = new THREE.Group();
     scene.add(boundsGroup, axes);
     const [l, w, h] = project.settings.dimensions;
-    const box = new THREE.Box3(new THREE.Vector3(-l / 2, -w / 2, 0), new THREE.Vector3(l / 2, w / 2, h));
+    const frame = getReferenceFrame(project.settings.dimensions, project.settings.referenceCenter);
+    const box = frame.bounds;
     const boxHelper = new THREE.Box3Helper(box, new THREE.Color('#91a08a'));
     const boxMaterials = Array.isArray(boxHelper.material) ? boxHelper.material : [boxHelper.material];
     boxMaterials.forEach((material) => { material.transparent = true; material.opacity = 0.5; });
     boundsGroup.add(boxHelper);
     const labelHeight = Math.max(7, l / 35);
     const xLabel = textSprite(`${l.toFixed(1)} mm`, { height: labelHeight });
-    xLabel.position.set(0, -w / 2 - 12, 0);
+    xLabel.position.set(frame.center.x, box.min.y - 12, box.min.z);
     const yLabel = textSprite(`${w.toFixed(1)} mm`, { height: labelHeight });
-    yLabel.position.set(l / 2 + 12, 0, 0);
+    yLabel.position.set(box.max.x + 12, frame.center.y, box.min.z);
     const zLabel = textSprite(`${h.toFixed(1)} mm`, { height: labelHeight });
-    zLabel.position.set(-l / 2 - 12, w / 2 + 8, h / 2);
+    zLabel.position.set(box.min.x - 12, box.max.y + 8, frame.center.z);
     boundsGroup.add(xLabel, yLabel, zLabel);
     const origin = new THREE.Vector3(0, 0, -0.2);
     const axisSpecs: [THREE.Vector3, number, string, string][] = [
@@ -664,9 +658,7 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     if (!project || disposed) return;
     const s = project.settings;
     applyCameraType();
-    const [l, w, h] = s.dimensions;
-    const gap = s.gap;
-    const box = new THREE.Box3(new THREE.Vector3(-l / 2 - gap, -w / 2 - gap, 0), new THREE.Vector3(l / 2 + gap, w / 2 + gap, h + gap));
+    const box = getReferenceDisplayBounds(getReferenceFrame(s.dimensions, s.referenceCenter), s.gap);
     if (model && pose.visible) box.union(new THREE.Box3().setFromObject(pose));
     // Changed: fitting includes both visible model layers in the same workspace.
     if (lastLayerModel && lastPose.visible) box.union(new THREE.Box3().setFromObject(lastPose));
@@ -723,7 +715,11 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     const s = next.settings;
     const previous = previousProject?.settings;
     const dimensionChange = !previous || s.dimensions.some((n, i) => n !== previous.dimensions[i]);
-    if (dimensionChange) rebuildGuides();
+    // Changed: an explicit reference center moves guides and fit without changing
+    // either model layer's transform or the world-coordinate axes/grid.
+    const centerChange = !previous || (s.referenceCenter === null) !== (previous.referenceCenter === null) || !!s.referenceCenter?.some((value, index) => value !== previous.referenceCenter?.[index]);
+    const frameChange = dimensionChange || centerChange;
+    if (frameChange) rebuildGuides();
     boundsGroup.visible = s.bounds;
     axes.visible = s.axes;
     grid.visible = s.grid;
@@ -756,7 +752,7 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
       lastLayerSource = next.last.model;
       void updateLastLayerModel(next.last.model);
     } else updateLastLayerTransform();
-    if (!previous || s.view !== previous.view || s.orthographic !== previous.orthographic) fit();
+    if (!previous || frameChange || s.view !== previous.view || s.orthographic !== previous.orthographic) fit();
     invalidate();
   }
 

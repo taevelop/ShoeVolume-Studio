@@ -168,7 +168,8 @@ export async function captureModelReferences(
       renderer.render(scene, createReferenceCamera(plan, frame));
       const blob = await pngBlob(renderer.domElement);
       assertCurrent();
-      images.push({ ...frame, blob, modelDimensions: [...plan.modelDimensions] });
+      // Changed: preserve the pose's world center for exact image-plane placement.
+      images.push({ ...frame, blob, frameCenter: plan.center.toArray() as Vec3, modelDimensions: [...plan.modelDimensions] });
     }
     return images;
   } finally {

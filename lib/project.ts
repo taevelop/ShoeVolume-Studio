@@ -42,6 +42,7 @@ export interface LastLayer {
 export interface SceneSettings {
   sampleKind: SampleKind; // Changed: stored selection; uploaded model retains priority.
   dimensions: Vec3;
+  referenceCenter: Vec3 | null; // Changed: null keeps the original ground-based frame.
   gap: number;
   imageOpacity: number;
   lastOpacity: number;
@@ -96,7 +97,7 @@ export function createDefaultProject(): LastProject {
     schema: 'last-studio', version: 1, title: 'SHOOB F240 형상 검토',
     settings: {
       sampleKind: DEFAULT_SAMPLE_KIND, // Changed
-      dimensions: [253, 105.31, 79.4], gap: 28, imageOpacity: 0.58,
+      dimensions: [253, 105.31, 79.4], referenceCenter: null, gap: 28, imageOpacity: 0.58,
       lastOpacity: 1, grid: true, axes: true, bounds: false,
       wireframe: false, showLast: true, view: 'iso', orthographic: false,
       modelPosition: [0, 0, 0], modelRotation: [0, 0, 0], modelScale: 1,

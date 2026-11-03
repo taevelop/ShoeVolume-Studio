@@ -122,6 +122,10 @@ img { max-width: 100%; }
 .last-model-card .file-icon { background: #dcecf2; color: #477e96; }
 .last-model-card .model-card-head strong { color: #3c687d; }
 .last-model-actions { display: flex; justify-content: space-between; margin-top: 10px; }
+.frame-center-fields { padding-top: 14px; }
+.capture-apply-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; margin: 18px 0; padding: 16px; border: 1px solid #cbdcc0; border-radius: 9px; background: #f0f5eb; }
+.capture-apply-row strong { color: #405d43; font-size: 13px; }
+.capture-apply-row p { max-width: 460px; margin: 6px 0 0; color: #6d7767; font-size: 12px; line-height: 1.6; }
 .model-target-tabs { display: flex; gap: 6px; }
 .model-target-tabs button { flex: 1; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
 .model-target-tabs button.active { color: #36553b; background: #e5eedf; border-color: #b9caae; }

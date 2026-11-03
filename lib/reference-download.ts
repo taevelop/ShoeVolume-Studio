@@ -97,7 +97,9 @@ function validateCapture(capture: ReferenceCaptureImage): void {
   if (![capture.frameWidthMm, capture.frameHeightMm].every(value => Number.isFinite(value) && value > 0)
     || !Array.isArray(capture.modelDimensions) || capture.modelDimensions.length !== 3
     || !capture.modelDimensions.every(value => Number.isFinite(value) && value >= 0)
-    || !capture.modelDimensions.some(value => value > 0)) {
+    || !capture.modelDimensions.some(value => value > 0)
+    || !Array.isArray(capture.frameCenter) || capture.frameCenter.length !== 3
+    || !Array.from(capture.frameCenter).every(Number.isFinite)) {
     throw new Error('참조 이미지의 실측 프레임과 모델 치수를 확인해 주세요.');
   }
   if (!(capture.blob instanceof Blob) || capture.blob.size < 24) throw new Error('저장할 PNG 이미지가 없습니다. 다시 캡처해 주세요.');
@@ -137,6 +139,7 @@ export async function createReferenceZip(captures: ReferenceCaptureImage[], mode
       view: capture.view, filename: referenceCaptureFilename(modelName, capture.view),
       widthPx: capture.width, heightPx: capture.height,
       frameWidthMm: capture.frameWidthMm, frameHeightMm: capture.frameHeightMm,
+      frameCenterMm: { x: capture.frameCenter[0], y: capture.frameCenter[1], z: capture.frameCenter[2] }, // Changed
       mmPerPixelX: capture.frameWidthMm / capture.width,
       mmPerPixelY: capture.frameHeightMm / capture.height,
       modelDimensionsMm: { x: capture.modelDimensions[0], y: capture.modelDimensions[1], z: capture.modelDimensions[2] },

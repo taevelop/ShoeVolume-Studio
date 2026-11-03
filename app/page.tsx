@@ -12,7 +12,7 @@ import LastViewport from '@/components/last-viewport';
 import ReferenceDimensions from '@/components/reference-dimensions';
 import { ShoeSampleGallery, ShoeSampleQuickbar } from '@/components/shoe-sample-picker';
 import ReferenceCapturePanel from '@/components/reference-capture-panel'; // Changed
-import type { ReferenceCaptureFunction } from '@/lib/reference-capture-types'; // Changed
+import type { ReferenceCaptureFunction, ReferenceCaptureImage } from '@/lib/reference-capture-types'; // Changed
 import {
   createDefaultProject, createDefaultLastLayer, MAX_PROJECT_BYTES, PLANE_LABELS, type LastProject, type LastLayer, type ModelInfo,
   type PlaneKey, type SceneSettings, type Vec3, type ViewKey,
@@ -26,6 +26,7 @@ import { createReferenceProject } from '@/lib/reference-preset';
 import { REFERENCE_DIMENSIONS } from '@/lib/reference-data';
 import { SHOE_SAMPLES, DEFAULT_SAMPLE_KIND, type SampleKind } from '@/lib/shoe-sample-catalog';
 import { estimateProjectBytes } from '@/lib/project-validation'; // Changed
+import { applyCapturedReferences } from '@/lib/reference-registration'; // Changed
 
 const PLANE_KEYS: PlaneKey[] = ['side', 'top', 'front', 'rear'];
 const VIEWS: { key: ViewKey; label: string; axis: string }[] = [
@@ -333,6 +334,15 @@ export default function Home() {
     if (estimateProjectBytes(next) > MAX_PROJECT_BYTES) throw new Error('두 모델과 참조 이미지를 합친 프로젝트가 30 MB를 초과합니다. 더 작은 파일을 사용하세요. 현재 작업은 유지했습니다.');
   }
 
+  async function applyCaptureImages(images: ReferenceCaptureImage[]) {
+    const snapshot = currentProject.current;
+    const next = await applyCapturedReferences(snapshot, images, modelName);
+    if (currentProject.current !== snapshot) throw new Error('작업이 변경되었습니다. 현재 모델을 다시 캡처한 후 적용해 주세요.');
+    checkProjectCapacity(next);
+    setProject(next); setModal(null); setInspector('view'); setResetToken(n => n + 1);
+    notify('4면 참조 이미지의 크기와 중심 위치를 캡처에 맞춰 적용했습니다.');
+  }
+
   function selectImage(key: PlaneKey) { uploadPlane.current = key; imageInput.current?.click(); }
 
   function chooseSample(kind: SampleKind) {
@@ -555,6 +565,9 @@ export default function Home() {
             <p className="section-description">이미지가 배치되는 공간의 실제 크기</p>
             <VectorFields label="크기" unit="" value={settings.dimensions} min={1} max={10000} onChange={dimensions => updateSettings({ dimensions })} />
             <button className="text-button fit-frame" onClick={() => { updateSettings({ dimensions: modelInfo.dimensions.map(n => Math.max(1, Math.round(n * 10) / 10)) as Vec3 }); notify('기준 프레임을 모델 크기에 맞췄습니다.'); }}><Box size={13} />모델 크기에 맞추기</button>
+            <div className="frame-center-fields"><p className="section-description">프레임 중심 / mm{settings.referenceCenter ? ' · 위치 등록됨' : ' · 기본 원점 기준'}</p>
+              <VectorFields label="프레임 중심" unit="" value={settings.referenceCenter ?? [0, 0, settings.dimensions[2] / 2]} onChange={referenceCenter => updateSettings({ referenceCenter })} />
+              {settings.referenceCenter && <button className="text-button fit-frame" onClick={() => updateSettings({ referenceCenter: null })}><RotateCcw size={13} />기본 원점으로</button>}</div>
           </section>
           <section className="inspector-section"><h2>{PLANE_LABELS[selectedPlane].name} 이미지<span className="axis-pill">{PLANE_LABELS[selectedPlane].axis}</span></h2>
             <button className="selected-image" onClick={() => selectImage(selectedPlane)} disabled={!!busy}><span className="selected-image-preview"><PlaneThumbnail plane={selectedPlane} project={project} /></span>
@@ -625,10 +638,10 @@ export default function Home() {
     </Dialog>
     {/* Changed: mount only while open, so captured PNG previews are released on close. */}
     <Dialog open={modal === 'capture'} title="모델 참조 이미지 · PNG" onClose={() => setModal(null)} wide>
-      {modal === 'capture' ? <ReferenceCapturePanel modelName={project.model?.name ?? sampleDefinition.name} capture={captureReferences} onScreenshot={() => setScreenshotToken(n => n + 1)} /> : null}
+      {modal === 'capture' ? <ReferenceCapturePanel modelName={project.model?.name ?? sampleDefinition.name} capture={captureReferences} onScreenshot={() => setScreenshotToken(n => n + 1)} onApply={applyCaptureImages} /> : null}
     </Dialog>
     <Dialog open={modal === 'dimensions'} title="SHOOB F240 · 기준 치수표" onClose={() => setModal(null)} wide>
-      <ReferenceDimensions onApply={() => { updateSettings({ dimensions: [REFERENCE_DIMENSIONS.length, REFERENCE_DIMENSIONS.width, REFERENCE_DIMENSIONS.height] }); notify('기준 프레임에 제공하신 외곽 치수를 적용했습니다.'); }} />
+      <ReferenceDimensions onApply={() => { updateSettings({ dimensions: [REFERENCE_DIMENSIONS.length, REFERENCE_DIMENSIONS.width, REFERENCE_DIMENSIONS.height], referenceCenter: null }); notify('기준 프레임에 제공하신 외곽 치수를 적용했습니다.'); }} />
     </Dialog>
     <Dialog open={modal === 'references'} title="요청 참고 화면" onClose={() => setModal(null)} wide>
       <p className="dialog-description">제공하신 원본 자료입니다. 치수표 이미지는 기준 프레임과 수치 조회에 반영했습니다. 실제 라스트 비교에는 3D 파일을 불러오세요.</p>

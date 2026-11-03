@@ -36,6 +36,7 @@ function captures() {
   return ['rear', 'top', 'side', 'front'].map(view => ({
     view, blob: png, width: 1, height: 1,
     frameWidthMm: 280, frameHeightMm: 160,
+    frameCenter: [12, -3, 72.5], // Changed
     modelDimensions: [253, 105.31, 145],
   }));
 }
@@ -100,6 +101,7 @@ with zipfile.ZipFile(archive) as z:
         assert view['widthPx'] == view['heightPx'] == 1
         assert view['frameWidthMm'] == view['mmPerPixelX'] == 280
         assert view['frameHeightMm'] == view['mmPerPixelY'] == 160
+        assert view['frameCenterMm'] == {'x':12,'y':-3,'z':72.5}
         assert view['modelDimensionsMm'] == {'x':253,'y':105.31,'z':145}
     directions = {v['view']:v['direction'] for v in metadata['views']}
     assert directions['side'] == {'cameraFrom':'-Y','lookingToward':'+Y','imageRight':'+X','imageUp':'+Z'}
@@ -131,6 +133,9 @@ test('rejects invalid physical scale and invalid image bytes before packaging', 
   const invalidScale = captures();
   invalidScale[0].frameWidthMm = Number.NaN;
   await assert.rejects(() => createReferenceZip(invalidScale, 'shoe'), /실측 프레임/);
+  const invalidCenter = captures();
+  invalidCenter[0].frameCenter = [0, Number.NaN, 0];
+  await assert.rejects(() => createReferenceZip(invalidCenter, 'shoe'), /실측 프레임/);
   const invalidPng = captures();
   invalidPng[0].blob = new Blob([new Uint8Array(32)], { type: 'image/png' });
   await assert.rejects(() => createReferenceZip(invalidPng, 'shoe'), /PNG 데이터/);

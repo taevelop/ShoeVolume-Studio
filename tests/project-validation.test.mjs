@@ -263,3 +263,39 @@ test('validates secondary GLB headers and rejects remote or oversized secondary 
   };
   assert.throws(() => validateProject(project), (error) => error.code === 'too-large');
 });
+
+// Changed: reference centers are optional in old v1 files and explicit in new
+// registered captures, independent of both model transforms.
+test('migrates a missing reference center to the legacy null convention', () => {
+  const legacy = createDefaultProject();
+  delete legacy.settings.referenceCenter;
+  legacy.settings.dimensions = [300, 120, 95];
+  legacy.settings.modelPosition = [15, -7, 32];
+  const clean = validateProject(JSON.parse(JSON.stringify(legacy)));
+  assert.deepEqual(clean, {
+    ...legacy,
+    settings: { ...legacy.settings, referenceCenter: null },
+  });
+});
+
+test('round-trips explicit reference centers without changing either model pose', () => {
+  for (const referenceCenter of [null, [-100000, 0, 100000], [12.25, -3.5, 72.75]]) {
+    const project = createDefaultProject();
+    project.settings.referenceCenter = referenceCenter;
+    project.settings.modelPosition = [4, 5, 6];
+    project.last.enabled = true;
+    project.last.position = [-7, 8, 9];
+    assert.deepEqual(validateProject(JSON.parse(JSON.stringify(project))), project);
+  }
+});
+
+test('rejects non-finite, missing, malformed, or out-of-bounds center coordinates', () => {
+  for (const referenceCenter of [
+    [0, Number.NaN, 0], [0, 0, Infinity], [-100001, 0, 0], [0, 100001, 0],
+    [0, 0], [0, 0, 0, 0], new Array(3), [0, undefined, 0], '0,0,0', {},
+  ]) {
+    const project = createDefaultProject();
+    project.settings.referenceCenter = referenceCenter;
+    assert.throws(() => validateProject(project), /참조면 중심/);
+  }
+});

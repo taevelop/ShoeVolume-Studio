@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Download, FileArchive, Image as ImageIcon, Loader2, RefreshCw } from 'lucide-react';
+import { Camera, Download, FileArchive, Image as ImageIcon, Layers, Loader2, RefreshCw } from 'lucide-react';
 import { PLANE_LABELS } from '@/lib/project';
 import { downloadBlob } from '@/lib/project-io';
 import type { CaptureBackground, ReferenceCaptureFunction, ReferenceCaptureImage } from '@/lib/reference-capture-types';
@@ -10,10 +10,11 @@ import { createReferenceZip, referenceCaptureFilename, referenceZipFilename } fr
 type CapturePreview = ReferenceCaptureImage & { url: string };
 
 // Changed: isolated export panel owns preview URLs and discards unfinished captures on close.
-export default function ReferenceCapturePanel({ modelName, capture, onScreenshot }: {
+export default function ReferenceCapturePanel({ modelName, capture, onScreenshot, onApply }: {
   modelName: string;
   capture: ReferenceCaptureFunction;
   onScreenshot: () => void;
+  onApply: (images: ReferenceCaptureImage[]) => Promise<void>; // Changed
 }) {
   const [background, setBackground] = useState<CaptureBackground>('white');
   const [maxSize, setMaxSize] = useState<1024 | 2048>(2048);
@@ -21,6 +22,7 @@ export default function ReferenceCapturePanel({ modelName, capture, onScreenshot
   const [previews, setPreviews] = useState<CapturePreview[]>([]);
   const [pending, setPending] = useState(true);
   const [zipPending, setZipPending] = useState(false);
+  const [applyPending, setApplyPending] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const alive = useRef(false);
@@ -66,7 +68,15 @@ export default function ReferenceCapturePanel({ modelName, capture, onScreenshot
     } finally { if (alive.current) setZipPending(false); }
   }
 
-  const working = pending || zipPending;
+  async function applyReferences() {
+    if (pending || zipPending || applyPending || previews.length !== 4) return;
+    setApplyPending(true); setError(''); setMessage('');
+    try { await onApply(previews); }
+    catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : '참조 평면에 적용하지 못했습니다.'); }
+    finally { if (alive.current) setApplyPending(false); }
+  }
+
+  const working = pending || zipPending || applyPending;
   return <div className="reference-capture-panel">
     <p className="dialog-description">현재 모델의 측면·윗면·정면·후면을 정사영 PNG로 저장합니다. 모델의 정렬값을 적용하고, 배경의 참조 이미지와 그리드는 제외합니다.</p>
     <div className="capture-controls">
@@ -88,9 +98,12 @@ export default function ReferenceCapturePanel({ modelName, capture, onScreenshot
       </div>
       <div className="capture-preview-details"><div><h3>{PLANE_LABELS[image.view].name}<small>{PLANE_LABELS[image.view].axis}</small></h3>
         <p>{image.width} × {image.height} px</p><p>프레임 {image.frameWidthMm.toFixed(2)} × {image.frameHeightMm.toFixed(2)} mm</p></div>
-        <button className="button button-outline" aria-label={`${PLANE_LABELS[image.view].name} PNG 저장`} disabled={zipPending} onClick={() => saveImage(image)}><Download size={14} />PNG</button>
+        <button className="button button-outline" aria-label={`${PLANE_LABELS[image.view].name} PNG 저장`} disabled={working} onClick={() => saveImage(image)}><Download size={14} />PNG</button>
       </div>
     </article>)}</div> : null}
+
+    <div className="capture-apply-row"><div><strong>캡처에서 참조 평면으로</strong><p>기존 4면 이미지를 교체하고, 여백을 포함한 mm 크기와 현재 모델 중심에 자동 정렬합니다.</p></div>
+      <button className="button button-primary" disabled={working || previews.length !== 4} onClick={() => void applyReferences()}>{applyPending ? <Loader2 className="spin" size={16} /> : <Layers size={16} />}4면 참조로 적용</button></div>
 
     <div className="capture-export-footer">
       <div className="capture-export-note"><ImageIcon size={16} /><p>네 뷰의 mm당 픽셀 수는 같습니다. 프레임 치수에는 여백이 포함됩니다. 모델은 원래 색상과 표면으로 캡처됩니다.</p></div>

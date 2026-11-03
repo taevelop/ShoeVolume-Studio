@@ -16,6 +16,8 @@ export interface ReferenceCaptureImage {
   /** Full orthographic image frame, including the visible padding. */
   frameWidthMm: number;
   frameHeightMm: number;
+  /** World-space center shared by all four orthographic image frames. */
+  frameCenter: Vec3;
   /** World-axis bounds of the model after its current unit, scale, and pose. */
   modelDimensions: Vec3;
 }

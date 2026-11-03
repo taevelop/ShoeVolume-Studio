@@ -49,7 +49,7 @@ function vector(value: unknown, label: string, min: number, max: number): Vec3 {
   if (!Array.isArray(value) || value.length !== 3) {
     throw new ProjectValidationError(`${label}에는 X, Y, Z 값이 필요합니다.`);
   }
-  return value.map((item) => numeric(item, label, min, max)) as Vec3;
+  return Array.from(value, (item) => numeric(item, label, min, max)) as Vec3;
 }
 
 function boolean(value: unknown, label: string): boolean {
@@ -161,6 +161,9 @@ export function validateProject(input: unknown): LastProject {
     // Changed: older version-1 projects have no selection; preserve their other data.
     sampleKind: raw.sampleKind === undefined ? DEFAULT_SAMPLE_KIND : choice(raw.sampleKind, SAMPLE_KINDS, '신발 샘플'),
     dimensions: vector(raw.dimensions, '기준 치수', 1, 10000),
+    // Changed: missing or null retains legacy center [0, 0, height / 2].
+    referenceCenter: raw.referenceCenter === undefined || raw.referenceCenter === null
+      ? null : vector(raw.referenceCenter, '참조면 중심', -100000, 100000),
     gap: numeric(raw.gap, '면 간격', 0, 2000),
     imageOpacity: numeric(raw.imageOpacity, '이미지 불투명도', 0, 1),
     lastOpacity: numeric(raw.lastOpacity, '라스트 불투명도', 0, 1),
