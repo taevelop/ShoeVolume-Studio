@@ -11,6 +11,8 @@ import {
 import LastViewport from '@/components/last-viewport';
 import ReferenceDimensions from '@/components/reference-dimensions';
 import { ShoeSampleGallery, ShoeSampleQuickbar } from '@/components/shoe-sample-picker';
+import ReferenceCapturePanel from '@/components/reference-capture-panel'; // Changed
+import type { ReferenceCaptureFunction } from '@/lib/reference-capture-types'; // Changed
 import {
   createDefaultProject, PLANE_LABELS, type LastProject, type ModelInfo,
   type PlaneKey, type SceneSettings, type Vec3, type ViewKey,
@@ -30,7 +32,7 @@ const VIEWS: { key: ViewKey; label: string; axis: string }[] = [
   { key: 'top', label: '윗면', axis: 'XY' }, { key: 'front', label: '정면', axis: 'YZ' },
   { key: 'rear', label: '후면', axis: 'YZ' },
 ];
-type ModalKind = 'share' | 'help' | 'references' | 'dimensions' | 'samples' | 'reset' | null;
+type ModalKind = 'share' | 'help' | 'references' | 'dimensions' | 'samples' | 'capture' | 'reset' | null; // Changed
 type Notice = { message: string; type: 'success' | 'error' };
 
 function NumberField({ label, value, onChange, min = -10000, max = 10000, step = 1, suffix }: {
@@ -133,6 +135,7 @@ export default function Home() {
   const [distance, setDistance] = useState<number | null>(null);
   const [resetToken, setResetToken] = useState(0);
   const [screenshotToken, setScreenshotToken] = useState(0);
+  const [captureAvailable, setCaptureAvailable] = useState(false); // Changed
   const [draftStatus, setDraftStatus] = useState<'saving' | 'saved' | 'unavailable'>('saving');
   const [shareUrl, setShareUrl] = useState('');
   const [sharing, setSharing] = useState(false);
@@ -142,6 +145,7 @@ export default function Home() {
   const projectInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const captureRef = useRef<ReferenceCaptureFunction | null>(null); // Changed
   const uploadPlane = useRef<PlaneKey>('side');
   const dragCount = useRef(0);
   const mounted = useRef(true);
@@ -160,6 +164,14 @@ export default function Home() {
   const modelChanged = useCallback((info: ModelInfo) => setModelInfo(info), []);
   const modelLoaded = useCallback(() => { previousModel.current = null; }, []);
   const measurementChanged = useCallback((n: number | null) => setDistance(n), []);
+  // Changed: keep the renderer API stable while the export dialog owns its previews.
+  const captureReady = useCallback((capture: ReferenceCaptureFunction | null) => {
+    captureRef.current = capture; setCaptureAvailable(capture !== null);
+  }, []);
+  const captureReferences = useCallback<ReferenceCaptureFunction>(async options => {
+    if (!captureRef.current) throw new Error('3D 모델을 준비하는 중입니다. 잠시 후 다시 캡처해 주세요.');
+    return captureRef.current(options);
+  }, []);
 
   useEffect(() => {
     mounted.current = true;
@@ -425,19 +437,19 @@ export default function Home() {
           </div>
           <div className="viewport-canvas-area">
             {ready && <LastViewport project={project} onModelInfo={modelChanged} onError={reportError}
-              measure={measure} onMeasure={measurementChanged} resetToken={resetToken} screenshotToken={screenshotToken} onModelLoaded={modelLoaded} onRenderMode={setRenderMode} />}
+              measure={measure} onMeasure={measurementChanged} resetToken={resetToken} screenshotToken={screenshotToken} onModelLoaded={modelLoaded} onRenderMode={setRenderMode} onCaptureReady={captureReady} />}
             <div className="viewport-top-label"><span className="view-dot" /><span>{VIEWS.find(v => v.key === settings.view)?.axis}</span><span className="label-divider" />{settings.orthographic || settings.view !== 'iso' ? '정사영' : '원근 뷰'}{renderMode === 'software' && <span title="이 브라우저에서는 3D 형상을 호환 모드로 표시합니다"> · 호환 렌더링</span>}</div>
             {!project.model && <div className="sample-label">{sampleDefinition.englishName.toUpperCase()}<span>신발 개념 샘플 · 제조 검증 전</span></div>}
             {(!ready || busy) && <div className="loading-overlay"><Loader2 className="spin" size={24} /><span>{busy || '작업 공간을 준비하는 중'}</span></div>}
             {isDragging && <div className="drop-overlay"><Upload size={34} /><strong>여기에 파일을 놓으세요</strong><span>3D 모델 · 프로젝트 · {PLANE_LABELS[selectedPlane].name} 참조 이미지</span></div>}
             <div className="canvas-actionbar"><button className={referencesVisible ? 'active' : ''} onClick={toggleReferences} aria-pressed={referencesVisible}><Layers size={17} /><span>참조 이미지</span></button><span className="toolbar-separator" /><button className={measure ? 'active' : ''} onClick={() => setMeasure(v => !v)} aria-pressed={measure}><Ruler size={17} /><span>거리 측정</span></button>
-              <span className="toolbar-separator" /><button onClick={() => setScreenshotToken(n => n + 1)}><Camera size={17} /><span>화면 저장</span></button></div>
+              <span className="toolbar-separator" /><button onClick={() => setModal('capture')} disabled={!ready || !!busy || !captureAvailable}><Camera size={17} /><span>PNG 저장</span></button></div>
             {measure && <div className="measure-readout" role="status"><Ruler size={15} />{distance === null ? '모델 표면에서 두 점을 선택하세요' : <><strong>{distance.toFixed(2)}</strong> mm<span>다시 선택하면 새로 측정합니다</span></>}</div>}
           </div>
           <div className="viewport-footer"><span className="mouse-hint"><Move size={13} />드래그: 회전<span>·</span>휠: 확대<span>·</span>우클릭: 이동</span>
             <span className="touch-hint">한 손가락: 회전 · 두 손가락: 확대·이동</span><span className="unit-indicator">단위 <b>mm</b></span></div>
         </div>
-        <div className="bottom-strip"><div className="strip-title"><span className="eyebrow">REFERENCE VIEWS</span><span>한 공간, 네 가지 시선</span></div>
+        <div className="bottom-strip"><div className="strip-title"><span className="eyebrow">REFERENCE VIEWS</span><button className="reference-capture-trigger" onClick={() => setModal('capture')} disabled={!ready || !!busy || !captureAvailable}><Camera size={14} />참조 이미지 캡처</button></div>
           <div className="reference-tiles">{PLANE_KEYS.map(key => <button key={key} className={`reference-tile ${settings.view === key ? 'active' : ''}`}
             onClick={() => { updateSettings({ view: key }); setSelectedPlane(key); }} aria-label={`${PLANE_LABELS[key].name} 시점으로 보기`}>
             <span className="tile-image"><PlaneThumbnail plane={key} project={project} /></span><span className="tile-name">{PLANE_LABELS[key].name}<small>{PLANE_LABELS[key].axis}</small></span><ArrowUpRight size={14} />
@@ -518,12 +530,16 @@ export default function Home() {
       <ol className="guide-steps"><li><span>01</span><div><h3>신발 샘플을 고르거나 모델을 불러옵니다</h3><p>화면 위에서 신발 5종을 선택하거나 STL·OBJ·GLB를 불러오세요. GLB는 미터·Y축, STL은 mm·Z축을 기본으로 제안합니다. 실제 파일의 단위와 축을 확인하세요.</p></div></li>
         <li><span>02</span><div><h3>각 방향의 이미지를 배치합니다</h3><p>측면·윗면·정면·후면을 선택해 이미지를 넣으세요. 대상 외곽에 맞춰 자른 정사영 이미지가 비교하기 좋습니다.</p></div></li>
         <li><span>03</span><div><h3>크기와 위치를 맞춥니다</h3><p>기준 프레임은 이미지의 실제 크기입니다. 모델 정렬에서 위치·회전·균일 배율을 조절하고, 면 간격과 투명도로 형상을 비교하세요.</p></div></li>
-        <li><span>04</span><div><h3>프로젝트를 저장하고 공유합니다</h3><p>‘공유’에서 현재 상태를 저장해 링크를 만들거나 프로젝트 파일을 내려받으세요. 파일은 ‘열기’로 복원합니다.</p></div></li></ol>
+        <li><span>04</span><div><h3>이미지를 캡처하고 프로젝트를 공유합니다</h3><p>‘PNG 저장’에서 모델의 네 방향 이미지를 개별 PNG 또는 ZIP으로 저장하세요. ‘공유’에서는 현재 프로젝트의 링크를 만들 수 있고, 프로젝트 파일은 ‘열기’로 복원합니다.</p></div></li></ol>
       <div className="guide-note"><Ruler size={18} /><p>거리 측정은 모델 표면의 두 점 사이 직선거리입니다. 둘레·곡면 길이나 착화 적합성을 판정하지 않습니다.</p></div>
       <div className="guide-note"><ImageIcon size={18} /><p>기본 이미지는 제공된 치수표의 도면 영역입니다. 신발 5종은 독립적인 개념 샘플이며, 참조 사진이나 실제 라스트를 복원한 형상이 아닙니다.</p></div>
     </Dialog>
     <Dialog open={modal === 'samples'} title="신발 샘플 컬렉션 · 5종" onClose={() => setModal(null)} wide>
       <ShoeSampleGallery selected={project.model ? null : sampleDefinition.id} disabled={!ready || !!busy} onSelect={chooseSample} />
+    </Dialog>
+    {/* Changed: mount only while open, so captured PNG previews are released on close. */}
+    <Dialog open={modal === 'capture'} title="모델 참조 이미지 · PNG" onClose={() => setModal(null)} wide>
+      {modal === 'capture' ? <ReferenceCapturePanel modelName={project.model?.name ?? sampleDefinition.name} capture={captureReferences} onScreenshot={() => setScreenshotToken(n => n + 1)} /> : null}
     </Dialog>
     <Dialog open={modal === 'dimensions'} title="SHOOB F240 · 기준 치수표" onClose={() => setModal(null)} wide>
       <ReferenceDimensions onApply={() => { updateSettings({ dimensions: [REFERENCE_DIMENSIONS.length, REFERENCE_DIMENSIONS.width, REFERENCE_DIMENSIONS.height] }); notify('기준 프레임에 제공하신 외곽 치수를 적용했습니다.'); }} />

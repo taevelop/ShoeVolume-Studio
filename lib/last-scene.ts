@@ -8,6 +8,9 @@ import { createSampleReference, disposeMaterial, disposeObject, textSprite } fro
 import { SoftwareRenderer } from './scene-software-renderer';
 import { createShoeSample } from './shoe-samples';
 import { DEFAULT_SAMPLE_KIND, type ShoeSampleKind } from './shoe-sample-catalog';
+// Changed: reference export uses an isolated renderer without changing this scene.
+import { captureModelReferences } from './reference-capture';
+import type { ReferenceCaptureFunction } from './reference-capture-types';
 
 interface SceneCallbacks {
   onModelInfo: (info: ModelInfo) => void;
@@ -24,6 +27,7 @@ export interface LastSceneController {
   setMeasure: (enabled: boolean) => void;
   fit: () => void;
   screenshot: () => void;
+  captureReferences: ReferenceCaptureFunction;
   dispose: () => void;
 }
 
@@ -179,6 +183,10 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
   let project: LastProject | null = null;
   let previousProject: LastProject | null = null;
   let modelRevision = 0;
+  // Changed: reject pending, superseded, or disposed model captures reliably.
+  let modelLoading = false;
+  let modelPoseRevision = 0;
+  let captureQueue: Promise<unknown> = Promise.resolve();
   let modelSource: ModelAsset | null | undefined;
   let currentSample = true;
   let model: THREE.Group | null = null;
@@ -378,6 +386,7 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
 
   async function updateModel(asset: ModelAsset | null, sampleKind: ShoeSampleKind): Promise<void> {
     const revision = ++modelRevision;
+    modelLoading = true;
     callbacks.onLoading(true);
     try {
       const next = await parseLastModel(asset, sampleKind);
@@ -400,7 +409,10 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
       const message = error instanceof Error ? error.message : '3D 파일을 읽을 수 없습니다.';
       callbacks.onError(message.includes('DRACO') || message.includes('Meshopt') ? '압축을 끈 GLB 또는 STL 파일을 사용해 주세요.' : message);
     } finally {
-      if (!disposed && revision === modelRevision) callbacks.onLoading(false);
+      if (!disposed && revision === modelRevision) {
+        modelLoading = false;
+        callbacks.onLoading(false);
+      }
     }
   }
 
@@ -625,7 +637,11 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
       void updateModel(next.model, s.sampleKind);
     } else {
       const transformChange = !previous || s.modelScale !== previous.modelScale || s.modelUp !== previous.modelUp || s.modelUnits !== previous.modelUnits || s.modelRotation.some((n, i) => n !== previous.modelRotation[i]) || s.modelPosition.some((n, i) => n !== previous.modelPosition[i]);
-      if (transformChange) clearMeasurement();
+      if (transformChange) {
+        // Changed: a capture of an older pose cannot be delivered as the new pose.
+        modelPoseRevision++;
+        clearMeasurement();
+      }
       updateModelTransform();
     }
     if (!previous || s.view !== previous.view || s.orthographic !== previous.orthographic) fit();
@@ -653,6 +669,31 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     }, 'image/png');
   }
 
+  // Changed: snapshot only the normalized model pose; display guides, opacity,
+  // wireframe, visibility, and the user's camera stay completely independent.
+  const captureReferences: ReferenceCaptureFunction = async (options) => {
+    if (disposed) throw new Error('3D 화면이 닫혔습니다. 다시 열어 캡처해 주세요.');
+    if (modelLoading) throw new Error('모델을 불러오는 중입니다. 완료된 뒤 다시 캡처해 주세요.');
+    if (!model) throw new Error('캡처할 3D 모델을 먼저 불러와 주세요.');
+    const revision = modelRevision;
+    const poseRevision = modelPoseRevision;
+    const requestOptions = { ...options };
+    const assertCurrent = () => {
+      if (disposed) throw new Error('3D 화면이 닫혀 캡처를 중단했습니다.');
+      if (modelLoading || revision !== modelRevision || poseRevision !== modelPoseRevision) {
+        throw new Error('모델이 바뀌었습니다. 현재 모델로 다시 캡처해 주세요.');
+      }
+    };
+    // Changed: StrictMode and dialog reopen requests can overlap safely. Queue
+    // renderers to bound memory; only a changed source/pose or disposal cancels.
+    const pending = captureQueue.catch(() => {}).then(() => {
+      assertCurrent();
+      return captureModelReferences(pose, requestOptions, softwareMode, assertCurrent);
+    });
+    captureQueue = pending;
+    return pending;
+  };
+
   function dispose(): void {
     disposed = true;
     modelRevision++;
@@ -672,5 +713,5 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     references.clear();
   }
 
-  return { setProject, setMeasure, fit, screenshot, dispose };
+  return { setProject, setMeasure, fit, screenshot, captureReferences, dispose };
 }

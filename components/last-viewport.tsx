@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { LastProject, ModelInfo } from '@/lib/project';
 import type { LastSceneController } from '@/lib/last-scene';
+import type { ReferenceCaptureFunction } from '@/lib/reference-capture-types';
 
 export interface LastViewportProps {
   project: LastProject;
@@ -12,20 +13,22 @@ export interface LastViewportProps {
   onMeasure: (distance: number | null) => void;
   onModelLoaded?: (name: string | null) => void;
   onRenderMode?: (mode: 'webgl' | 'software') => void;
+  // Changed: parents can request reference PNGs once the scene is available.
+  onCaptureReady?: (capture: ReferenceCaptureFunction | null) => void;
   resetToken: number;
   screenshotToken: number;
 }
 
-export default function LastViewport({ project, onModelInfo, onError, measure, onMeasure, onModelLoaded, onRenderMode, resetToken, screenshotToken }: LastViewportProps) {
+export default function LastViewport({ project, onModelInfo, onError, measure, onMeasure, onModelLoaded, onRenderMode, onCaptureReady, resetToken, screenshotToken }: LastViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<LastSceneController | null>(null);
-  const callbacksRef = useRef({ onModelInfo, onError, onMeasure, onModelLoaded, onRenderMode });
+  const callbacksRef = useRef({ onModelInfo, onError, onMeasure, onModelLoaded, onRenderMode, onCaptureReady });
   const projectRef = useRef(project);
   const measureRef = useRef(measure);
   const [loading, setLoading] = useState(true);
   const [fatalError, setFatalError] = useState<string | null>(null);
   const [renderNotice, setRenderNotice] = useState<string | null>(null);
-  callbacksRef.current = { onModelInfo, onError, onMeasure, onModelLoaded, onRenderMode };
+  callbacksRef.current = { onModelInfo, onError, onMeasure, onModelLoaded, onRenderMode, onCaptureReady };
   projectRef.current = project;
   measureRef.current = measure;
 
@@ -42,7 +45,12 @@ export default function LastViewport({ project, onModelInfo, onError, measure, o
         onModelLoaded: (name) => callbacksRef.current.onModelLoaded?.(name),
         onRenderMode: (mode) => callbacksRef.current.onRenderMode?.(mode),
         onNotice: setRenderNotice,
-        onLoading: setLoading,
+        // Changed: capture is available only after the requested model finishes
+        // loading, including the initial dynamically imported scene.
+        onLoading: (pending) => {
+          setLoading(pending);
+          callbacksRef.current.onCaptureReady?.(pending ? null : controllerRef.current?.captureReferences ?? null);
+        },
       });
       controllerRef.current = controller;
       controller.setProject(projectRef.current);
@@ -56,6 +64,8 @@ export default function LastViewport({ project, onModelInfo, onError, measure, o
     });
     return () => {
       cancelled = true;
+      // Changed: invalidate parent references before the controller is disposed.
+      callbacksRef.current.onCaptureReady?.(null);
       controllerRef.current?.dispose();
       controllerRef.current = null;
     };
