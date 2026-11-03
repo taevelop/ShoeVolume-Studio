@@ -25,6 +25,20 @@ export interface ModelAsset {
   dataUrl: string;
 }
 
+// Changed: the optional last layer has its own source, display, and transform.
+export interface LastLayer {
+  enabled: boolean;
+  model: ModelAsset | null;
+  visible: boolean;
+  opacity: number;
+  wireframe: boolean;
+  position: Vec3;
+  rotation: Vec3;
+  scale: number;
+  units: 'mm' | 'cm' | 'm' | 'in';
+  up: 'z' | 'y';
+}
+
 export interface SceneSettings {
   sampleKind: SampleKind; // Changed: stored selection; uploaded model retains priority.
   dimensions: Vec3;
@@ -53,6 +67,7 @@ export interface LastProject {
   settings: SceneSettings;
   planes: Record<PlaneKey, PlaneState>;
   model: ModelAsset | null;
+  last: LastLayer; // Changed: a null model uses the demo only when enabled.
 }
 
 export interface ModelInfo {
@@ -67,6 +82,14 @@ export const PLANE_LABELS: Record<PlaneKey, { name: string; axis: string; short:
   front: { name: '정면', axis: 'YZ', short: 'FRONT' },
   rear: { name: '후면', axis: 'YZ', short: 'REAR' },
 };
+
+// Changed: fresh values also provide a lossless default for older version-1 files.
+export function createDefaultLastLayer(): LastLayer {
+  return {
+    enabled: false, model: null, visible: true, opacity: 0.58, wireframe: false,
+    position: [0, 0, 5], rotation: [0, 0, 0], scale: 1, units: 'mm', up: 'z',
+  };
+}
 
 export function createDefaultProject(): LastProject {
   return {
@@ -86,6 +109,7 @@ export function createDefaultProject(): LastProject {
       rear: { visible: false, flip: false, image: null },
     },
     model: null,
+    last: createDefaultLastLayer(), // Changed
   };
 }
 

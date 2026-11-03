@@ -117,6 +117,18 @@ img { max-width: 100%; }
 .section-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 25px 2px 11px; color: #68765c; font-size: 11px; font-weight: 620; }
 .count-badge { color: #69765f; font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: .6px; }
 .model-card { padding: 12px; border: 1px solid #d9e3d0; border-radius: 8px; background: #f0f5eb; }
+/* Changed: the shoe and last retain independent visual identities. */
+.last-model-card { background: #edf5f7; border-color: #cbdee5; }
+.last-model-card .file-icon { background: #dcecf2; color: #477e96; }
+.last-model-card .model-card-head strong { color: #3c687d; }
+.last-model-actions { display: flex; justify-content: space-between; margin-top: 10px; }
+.model-target-tabs { display: flex; gap: 6px; }
+.model-target-tabs button { flex: 1; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
+.model-target-tabs button.active { color: #36553b; background: #e5eedf; border-color: #b9caae; }
+.model-target-tabs button:disabled { opacity: .4; cursor: not-allowed; }
+.model-comparison-legend { position: absolute; top: 47px; left: 17px; display: flex; align-items: center; gap: 6px; padding: 5px 8px; max-width: calc(100% - 34px); border-radius: 5px; background: #ffffffda; color: #56615c; font-size: 11px; pointer-events: none; }
+.shoe-legend-dot, .last-legend-dot { display: inline-block; flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; background: #8b7158; }
+.last-legend-dot { background: #4b9cbe; margin-left: 8px; }
 .model-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .file-icon { display: grid; place-items: center; flex-shrink: 0; width: 32px; height: 35px; border-radius: 6px; background: #e3ecd9; color: #69765f; }
 .model-card-head > div { flex: 1; min-width: 0; }

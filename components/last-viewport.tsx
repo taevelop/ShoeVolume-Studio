@@ -12,6 +12,10 @@ export interface LastViewportProps {
   measure: boolean;
   onMeasure: (distance: number | null) => void;
   onModelLoaded?: (name: string | null) => void;
+  // Changed: the Last layer has its own information and import lifecycle.
+  onLastInfo?: (info: ModelInfo | null) => void;
+  onLastError?: (message: string) => void;
+  onLastLoaded?: (name: string | null) => void;
   onRenderMode?: (mode: 'webgl' | 'software') => void;
   // Changed: parents can request reference PNGs once the scene is available.
   onCaptureReady?: (capture: ReferenceCaptureFunction | null) => void;
@@ -19,16 +23,16 @@ export interface LastViewportProps {
   screenshotToken: number;
 }
 
-export default function LastViewport({ project, onModelInfo, onError, measure, onMeasure, onModelLoaded, onRenderMode, onCaptureReady, resetToken, screenshotToken }: LastViewportProps) {
+export default function LastViewport({ project, onModelInfo, onError, measure, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onRenderMode, onCaptureReady, resetToken, screenshotToken }: LastViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<LastSceneController | null>(null);
-  const callbacksRef = useRef({ onModelInfo, onError, onMeasure, onModelLoaded, onRenderMode, onCaptureReady });
+  const callbacksRef = useRef({ onModelInfo, onError, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onRenderMode, onCaptureReady });
   const projectRef = useRef(project);
   const measureRef = useRef(measure);
   const [loading, setLoading] = useState(true);
   const [fatalError, setFatalError] = useState<string | null>(null);
   const [renderNotice, setRenderNotice] = useState<string | null>(null);
-  callbacksRef.current = { onModelInfo, onError, onMeasure, onModelLoaded, onRenderMode, onCaptureReady };
+  callbacksRef.current = { onModelInfo, onError, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onRenderMode, onCaptureReady };
   projectRef.current = project;
   measureRef.current = measure;
 
@@ -43,6 +47,9 @@ export default function LastViewport({ project, onModelInfo, onError, measure, o
         onError: (message) => callbacksRef.current.onError(message),
         onMeasure: (distance) => callbacksRef.current.onMeasure(distance),
         onModelLoaded: (name) => callbacksRef.current.onModelLoaded?.(name),
+        onLastInfo: (info) => callbacksRef.current.onLastInfo?.(info),
+        onLastError: (message) => callbacksRef.current.onLastError?.(message),
+        onLastLoaded: (name) => callbacksRef.current.onLastLoaded?.(name),
         onRenderMode: (mode) => callbacksRef.current.onRenderMode?.(mode),
         onNotice: setRenderNotice,
         // Changed: capture is available only after the requested model finishes

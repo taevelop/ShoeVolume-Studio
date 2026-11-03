@@ -1,7 +1,9 @@
 import {
   MAX_ASSET_BYTES,
   MAX_PROJECT_BYTES,
+  createDefaultLastLayer,
   type ImageAsset,
+  type LastLayer,
   type LastProject,
   type ModelAsset,
   type PlaneKey,
@@ -115,15 +117,37 @@ export function validateModelAsset(input: unknown): ModelAsset {
   return { name: text(model.name, '라스트 이름', 180), format, dataUrl: data.url };
 }
 
+// Changed: a stored secondary layer is fully validated, even while disabled.
+function validateLastLayer(input: unknown): LastLayer {
+  const last = record(input, '독립 라스트');
+  return {
+    enabled: boolean(last.enabled, '독립 라스트 사용'),
+    model: last.model === null ? null : validateModelAsset(last.model),
+    visible: boolean(last.visible, '독립 라스트 표시'),
+    opacity: numeric(last.opacity, '독립 라스트 불투명도', 0, 1),
+    wireframe: boolean(last.wireframe, '독립 라스트 와이어프레임'),
+    position: vector(last.position, '독립 라스트 위치', -100000, 100000),
+    rotation: vector(last.rotation, '독립 라스트 회전', -36000, 36000),
+    scale: numeric(last.scale, '독립 라스트 배율', 0.000001, 10000),
+    units: choice(last.units, ['mm', 'cm', 'm', 'in'] as const, '독립 라스트 원본 단위'),
+    up: choice(last.up, ['z', 'y'] as const, '독립 라스트 위쪽 축'),
+  };
+}
+
 /** Calculate serialized UTF-8 size without copying large base64 strings. */
 export function estimateProjectBytes(project: LastProject): number {
-  let assetCharacters = project.model?.dataUrl.length ?? 0;
+  // Changed: both model payloads count toward the same portable-project budget.
+  let assetCharacters = (project.model?.dataUrl.length ?? 0) + (project.last.model?.dataUrl.length ?? 0);
   const planes = Object.fromEntries(PLANE_KEYS.map((key) => {
     const plane = project.planes[key];
     assetCharacters += plane.image?.dataUrl.length ?? 0;
     return [key, { ...plane, image: plane.image ? { ...plane.image, dataUrl: '' } : null }];
   }));
-  const envelope = { ...project, planes, model: project.model ? { ...project.model, dataUrl: '' } : null };
+  const envelope = {
+    ...project, planes,
+    model: project.model ? { ...project.model, dataUrl: '' } : null,
+    last: { ...project.last, model: project.last.model ? { ...project.last.model, dataUrl: '' } : null },
+  };
   return new TextEncoder().encode(JSON.stringify(envelope)).byteLength + assetCharacters;
 }
 
@@ -168,6 +192,8 @@ export function validateProject(input: unknown): LastProject {
     title: text(project.title, '프로젝트 이름', 100),
     settings, planes,
     model: project.model === null ? null : validateModelAsset(project.model),
+    // Changed: older files keep their primary model and gain an inactive last.
+    last: project.last === undefined ? createDefaultLastLayer() : validateLastLayer(project.last),
   };
   if (project.savedAt !== undefined) {
     if (typeof project.savedAt !== 'string' || project.savedAt.length > 32 || !Number.isFinite(Date.parse(project.savedAt))) {

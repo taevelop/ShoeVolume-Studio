@@ -1,5 +1,5 @@
-import type { LastProject } from './project';
-import { validateProject } from './project-validation';
+import { MAX_PROJECT_BYTES, type LastProject } from './project';
+import { estimateProjectBytes, validateProject } from './project-validation';
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -25,6 +25,10 @@ export async function loadDraft(): Promise<LastProject | null> {
 }
 
 export async function saveDraft(project: LastProject): Promise<void> {
+  // Changed: keep the last valid draft when combined assets exceed the project budget.
+  if (estimateProjectBytes(project) > MAX_PROJECT_BYTES) {
+    throw new Error('프로젝트 전체 크기는 30 MB 이하여야 합니다. 이미지나 모델 용량을 줄인 후 다시 저장해 주세요.');
+  }
   const db = await openDatabase();
   try {
     await new Promise<void>((resolve, reject) => {

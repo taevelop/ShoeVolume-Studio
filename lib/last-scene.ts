@@ -4,13 +4,14 @@ import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { PLANE_LABELS, type LastProject, type ModelAsset, type ModelInfo, type PlaneKey, type Vec3 } from './project';
-import { createSampleReference, disposeMaterial, disposeObject, textSprite } from './scene-geometry';
+import { createSampleLastGeometry, createSampleReference, disposeMaterial, disposeObject, textSprite } from './scene-geometry';
 import { SoftwareRenderer } from './scene-software-renderer';
 import { createShoeSample } from './shoe-samples';
 import { DEFAULT_SAMPLE_KIND, type ShoeSampleKind } from './shoe-sample-catalog';
 // Changed: reference export uses an isolated renderer without changing this scene.
 import { captureModelReferences } from './reference-capture';
 import type { ReferenceCaptureFunction } from './reference-capture-types';
+import { applyModelLayerTransform } from './model-layer';
 
 interface SceneCallbacks {
   onModelInfo: (info: ModelInfo) => void;
@@ -18,6 +19,10 @@ interface SceneCallbacks {
   onMeasure: (distance: number | null) => void;
   onLoading: (loading: boolean) => void;
   onModelLoaded?: (name: string | null) => void;
+  // Changed: Last-layer events cannot trigger the shoe import rollback path.
+  onLastInfo?: (info: ModelInfo | null) => void;
+  onLastError?: (message: string) => void;
+  onLastLoaded?: (name: string | null) => void;
   onRenderMode?: (mode: 'webgl' | 'software') => void;
   onNotice?: (message: string) => void;
 }
@@ -145,6 +150,24 @@ export async function parseLastModel(asset: ModelAsset | null, sampleKind: ShoeS
   return root;
 }
 
+// Changed: an independent Last uses the same file parser but a distinct cyan
+// material. Its demo is a closed illustrative last, never a shoe sample.
+export async function parseLastLayerModel(asset: ModelAsset | null): Promise<THREE.Group> {
+  const root = asset ? await parseLastModel(asset) : new THREE.Group();
+  if (!asset) {
+    root.name = 'Demo Last · illustrative geometry';
+    root.add(new THREE.Mesh(createSampleLastGeometry([244, 96, 105]), modelMaterial()));
+  }
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    const materials: THREE.Material[] = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of materials) {
+      if (material instanceof THREE.MeshStandardMaterial) material.color.set('#4e9fbe');
+    }
+  });
+  return root;
+}
+
 export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks): LastSceneController {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color('#f3f4f0');
@@ -196,6 +219,21 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
   pose.add(normalization);
   normalization.add(sourceAxis);
   scene.add(pose);
+  // Changed: the shoe and Last keep separate geometry, normalization, pose, and
+  // loading revisions. Changing a shoe never removes or reloads its Last.
+  let lastLayerModel: THREE.Group | null = null;
+  let lastLayerSource: ModelAsset | null | undefined;
+  let lastLayerRevision = 0;
+  let lastLayerSample = true;
+  let lastLayerTriangles = 0;
+  let lastLayerInfoKey = '';
+  const lastPose = new THREE.Group();
+  const lastNormalization = new THREE.Group();
+  const lastSourceAxis = new THREE.Group();
+  lastPose.add(lastNormalization);
+  lastNormalization.add(lastSourceAxis);
+  lastPose.visible = false;
+  scene.add(lastPose);
   const referenceRoot = new THREE.Group();
   scene.add(referenceRoot);
   const references = new Map<PlaneKey, ReferencePlane>();
@@ -341,19 +379,11 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
   function updateModelTransform(): void {
     if (!project || !model) return;
     const s = project.settings;
-    pose.position.set(0, 0, 0);
-    pose.rotation.set(0, 0, 0);
-    pose.scale.setScalar(1);
-    normalization.position.set(0, 0, 0);
-    sourceAxis.rotation.set(!currentSample && s.modelUp === 'y' ? Math.PI / 2 : 0, 0, 0);
-    pose.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(sourceAxis);
-    const center = box.getCenter(new THREE.Vector3());
-    normalization.position.set(-center.x, -center.y, -box.min.z);
-    const unit = currentSample ? 1 : { mm: 1, cm: 10, m: 1000, in: 25.4 }[s.modelUnits];
-    pose.scale.setScalar(unit * s.modelScale);
-    pose.rotation.set(...s.modelRotation.map(THREE.MathUtils.degToRad) as Vec3);
-    pose.position.fromArray(s.modelPosition);
+    // Changed: share the normalization math, never the layer transforms.
+    applyModelLayerTransform({ pose, normalization, sourceAxis }, {
+      position: s.modelPosition, rotation: s.modelRotation, scale: s.modelScale,
+      units: s.modelUnits, up: s.modelUp,
+    }, currentSample);
     pose.visible = s.showLast;
     pose.traverse((child) => {
       if (child instanceof THREE.Mesh) {
@@ -414,6 +444,75 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
         callbacks.onLoading(false);
       }
     }
+  }
+
+  // Changed: Last visibility, materials, transforms and model information are
+  // independent from the primary shoe and do not invalidate its PNG capture.
+  function updateLastLayerTransform(): void {
+    if (!project || !lastLayerModel) return;
+    const layer = project.last;
+    applyModelLayerTransform({ pose: lastPose, normalization: lastNormalization, sourceAxis: lastSourceAxis }, layer, lastLayerSample);
+    lastPose.visible = layer.enabled && layer.visible;
+    lastPose.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      const materials: THREE.Material[] = Array.isArray(child.material) ? child.material : [child.material];
+      for (const material of materials) {
+        const surface = material as THREE.Material & { wireframe?: boolean };
+        const transparent = layer.opacity < 0.999;
+        const changed = material.transparent !== transparent || (typeof surface.wireframe === 'boolean' && surface.wireframe !== layer.wireframe);
+        material.opacity = layer.opacity;
+        material.transparent = transparent;
+        material.depthWrite = !transparent;
+        if (typeof surface.wireframe === 'boolean') surface.wireframe = layer.wireframe;
+        if (changed) material.needsUpdate = true;
+      }
+      child.castShadow = layer.opacity > 0.25 && !layer.wireframe;
+      child.receiveShadow = true;
+    });
+    const size = new THREE.Box3().setFromObject(lastPose).getSize(new THREE.Vector3());
+    const dimensions = size.toArray().map((value) => Math.max(0, value)) as Vec3;
+    const infoKey = dimensions.map((value) => value.toFixed(3)).join(',') + `:${lastLayerTriangles}:${lastLayerSample}`;
+    if (infoKey !== lastLayerInfoKey) {
+      lastLayerInfoKey = infoKey;
+      callbacks.onLastInfo?.({ dimensions, triangles: Math.round(lastLayerTriangles), sample: lastLayerSample });
+    }
+    invalidate();
+  }
+
+  async function updateLastLayerModel(asset: ModelAsset | null): Promise<void> {
+    const revision = ++lastLayerRevision;
+    try {
+      const next = await parseLastLayerModel(asset);
+      if (disposed || revision !== lastLayerRevision || !project?.last.enabled) { disposeObject(next); return; }
+      if (lastLayerModel) disposeObject(lastLayerModel);
+      lastLayerModel = next;
+      lastLayerSample = asset === null;
+      lastLayerInfoKey = '';
+      lastLayerTriangles = 0;
+      lastSourceAxis.add(next);
+      next.traverse((child) => {
+        if (child instanceof THREE.Mesh) lastLayerTriangles += (child.geometry.index?.count ?? child.geometry.getAttribute('position').count) / 3;
+      });
+      updateLastLayerTransform();
+      fit();
+      callbacks.onLastLoaded?.(asset?.name ?? null);
+    } catch (error) {
+      if (disposed || revision !== lastLayerRevision) return;
+      const message = error instanceof Error ? error.message : 'Last 3D 파일을 읽을 수 없습니다.';
+      callbacks.onLastError?.(message.includes('DRACO') || message.includes('Meshopt') ? '압축을 끈 GLB 또는 STL Last 파일을 사용해 주세요.' : message);
+    }
+  }
+
+  function removeLastLayer(): void {
+    lastLayerRevision++;
+    if (lastLayerModel) disposeObject(lastLayerModel);
+    lastLayerModel = null;
+    lastLayerSource = undefined;
+    lastLayerInfoKey = '';
+    lastLayerTriangles = 0;
+    lastPose.visible = false;
+    callbacks.onLastInfo?.(null);
+    invalidate();
   }
 
   function referenceSize(key: PlaneKey): [number, number] {
@@ -569,6 +668,8 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     const gap = s.gap;
     const box = new THREE.Box3(new THREE.Vector3(-l / 2 - gap, -w / 2 - gap, 0), new THREE.Vector3(l / 2 + gap, w / 2 + gap, h + gap));
     if (model && pose.visible) box.union(new THREE.Box3().setFromObject(pose));
+    // Changed: fitting includes both visible model layers in the same workspace.
+    if (lastLayerModel && lastPose.visible) box.union(new THREE.Box3().setFromObject(lastPose));
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     const radius = size.length() / 2;
@@ -644,6 +745,17 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
       }
       updateModelTransform();
     }
+    // Changed: only Last asset changes start its parser; shoe selection, camera,
+    // references, and primary material controls preserve the loaded Last object.
+    if (!next.last.enabled) {
+      if (!previousProject || previousProject.last.enabled || lastLayerSource !== undefined || lastLayerModel) {
+        removeLastLayer();
+        fit();
+      }
+    } else if (lastLayerSource === undefined || next.last.model !== lastLayerSource) {
+      lastLayerSource = next.last.model;
+      void updateLastLayerModel(next.last.model);
+    } else updateLastLayerTransform();
     if (!previous || s.view !== previous.view || s.orthographic !== previous.orthographic) fit();
     invalidate();
   }
@@ -697,6 +809,7 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
   function dispose(): void {
     disposed = true;
     modelRevision++;
+    lastLayerRevision++;
     if (renderRequest) cancelAnimationFrame(renderRequest);
     observer.disconnect();
     controls.removeEventListener('change', invalidate);

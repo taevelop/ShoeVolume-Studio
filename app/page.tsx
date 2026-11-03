@@ -14,7 +14,7 @@ import { ShoeSampleGallery, ShoeSampleQuickbar } from '@/components/shoe-sample-
 import ReferenceCapturePanel from '@/components/reference-capture-panel'; // Changed
 import type { ReferenceCaptureFunction } from '@/lib/reference-capture-types'; // Changed
 import {
-  createDefaultProject, PLANE_LABELS, type LastProject, type ModelInfo,
+  createDefaultProject, createDefaultLastLayer, MAX_PROJECT_BYTES, PLANE_LABELS, type LastProject, type LastLayer, type ModelInfo,
   type PlaneKey, type SceneSettings, type Vec3, type ViewKey,
 } from '@/lib/project';
 import {
@@ -25,6 +25,7 @@ import { loadDraft, saveDraft } from '@/lib/local-store';
 import { createReferenceProject } from '@/lib/reference-preset';
 import { REFERENCE_DIMENSIONS } from '@/lib/reference-data';
 import { SHOE_SAMPLES, DEFAULT_SAMPLE_KIND, type SampleKind } from '@/lib/shoe-sample-catalog';
+import { estimateProjectBytes } from '@/lib/project-validation'; // Changed
 
 const PLANE_KEYS: PlaneKey[] = ['side', 'top', 'front', 'rear'];
 const VIEWS: { key: ViewKey; label: string; axis: string }[] = [
@@ -127,9 +128,11 @@ export default function Home() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [modal, setModal] = useState<ModalKind>(null);
   const [inspector, setInspector] = useState<'view' | 'transform'>('view');
+  const [activeModel, setActiveModel] = useState<'shoe' | 'last'>('shoe'); // Changed: independent model controls.
   const [mobilePanel, setMobilePanel] = useState<'sources' | 'settings' | null>(null);
   const [selectedPlane, setSelectedPlane] = useState<PlaneKey>('side');
   const [modelInfo, setModelInfo] = useState<ModelInfo>({ dimensions: [253, 105.31, 79.4], triangles: 0, sample: true });
+  const [lastInfo, setLastInfo] = useState<ModelInfo | null>(null);
   const [renderMode, setRenderMode] = useState<'webgl' | 'software'>('webgl');
   const [measure, setMeasure] = useState(false);
   const [distance, setDistance] = useState<number | null>(null);
@@ -142,6 +145,7 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const modelInput = useRef<HTMLInputElement>(null);
+  const lastInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -152,6 +156,7 @@ export default function Home() {
   const currentProject = useRef(project);
   currentProject.current = project;
   const previousModel = useRef<{ model: LastProject['model']; settings: SceneSettings } | null>(null);
+  const previousLast = useRef<LastLayer | null>(null);
 
   const notify = useCallback((message: string, type: Notice['type'] = 'success') => setNotice({ message, type }), []);
   const reportError = useCallback((message: string) => {
@@ -163,6 +168,13 @@ export default function Home() {
   }, [notify]);
   const modelChanged = useCallback((info: ModelInfo) => setModelInfo(info), []);
   const modelLoaded = useCallback(() => { previousModel.current = null; }, []);
+  const lastLoaded = useCallback(() => { previousLast.current = null; }, []);
+  const reportLastError = useCallback((message: string) => {
+    const fallback = previousLast.current ?? createDefaultLastLayer();
+    previousLast.current = null;
+    setProject(current => ({ ...current, last: fallback }));
+    notify(message, 'error');
+  }, [notify]);
   const measurementChanged = useCallback((n: number | null) => setDistance(n), []);
   // Changed: keep the renderer API stable while the export dialog owns its previews.
   const captureReady = useCallback((capture: ReferenceCaptureFunction | null) => {
@@ -227,6 +239,24 @@ export default function Home() {
     setProject(previous => ({ ...previous, settings: { ...previous.settings, ...patch } }));
   }, []);
 
+  const updateLast = useCallback((patch: Partial<LastLayer>) => {
+    setProject(previous => ({ ...previous, last: { ...previous.last, ...patch } }));
+  }, []);
+
+  // Changed: the same inspector edits only the selected model.
+  function updateTarget(patch: Partial<LastLayer>) {
+    if (activeModel === 'last' && project.last.enabled) { updateLast(patch); return; }
+    const settingsPatch: Partial<SceneSettings> = {};
+    if (patch.position) settingsPatch.modelPosition = patch.position;
+    if (patch.rotation) settingsPatch.modelRotation = patch.rotation;
+    if (patch.scale !== undefined) settingsPatch.modelScale = patch.scale;
+    if (patch.units) settingsPatch.modelUnits = patch.units;
+    if (patch.up) settingsPatch.modelUp = patch.up;
+    if (patch.opacity !== undefined) settingsPatch.lastOpacity = patch.opacity;
+    if (patch.wireframe !== undefined) settingsPatch.wireframe = patch.wireframe;
+    updateSettings(settingsPatch);
+  }
+
   function updatePlane(key: PlaneKey, patch: Partial<LastProject['planes'][PlaneKey]>) {
     setProject(previous => ({ ...previous, planes: { ...previous.planes, [key]: { ...previous.planes[key], ...patch } } }));
   }
@@ -239,17 +269,42 @@ export default function Home() {
   }
 
   async function importModel(file: File) {
-    await runTask('라스트를 불러오는 중', async () => {
+    await runTask('신발 모델을 불러오는 중', async () => {
       const model = await readModelFile(file);
-      previousModel.current = { model: project.model, settings: project.settings };
-      setProject(previous => ({ ...previous, model, settings: {
-        ...previous.settings, modelPosition: [0, 0, 0], modelRotation: [0, 0, 0], modelScale: 1,
+      const current = currentProject.current;
+      const next: LastProject = { ...current, model, settings: {
+        ...current.settings, modelPosition: [0, 0, 0], modelRotation: [0, 0, 0], modelScale: 1,
         modelUp: model.format === 'glb' || model.format === 'obj' ? 'y' : 'z',
         modelUnits: model.format === 'glb' ? 'm' : 'mm', showLast: true,
-      } }));
-      setInspector('transform'); setResetToken(n => n + 1);
-      notify('라스트를 읽었습니다. 원본 단위와 축 방향을 확인하세요.');
+      } };
+      checkProjectCapacity(next);
+      previousModel.current = { model: current.model, settings: current.settings };
+      setProject(next);
+      setActiveModel('shoe'); setInspector('transform'); setResetToken(n => n + 1);
+      notify('신발 모델을 읽었습니다. 원본 단위와 축 방향을 확인하세요.');
     });
+  }
+
+  async function importLast(file: File) {
+    await runTask('라스트 모델을 불러오는 중', async () => {
+      const model = await readModelFile(file);
+      const current = currentProject.current;
+      const next: LastProject = { ...current, last: { ...createDefaultLastLayer(), enabled: true, model, position: [0, 0, 0],
+        up: model.format === 'glb' || model.format === 'obj' ? 'y' : 'z',
+        units: model.format === 'glb' ? 'm' : 'mm' } };
+      checkProjectCapacity(next);
+      previousLast.current = current.last;
+      setProject(next);
+      setActiveModel('last'); setInspector('transform'); setResetToken(n => n + 1);
+      notify('라스트를 추가했습니다. 신발과 독립적으로 정렬할 수 있습니다.');
+    });
+  }
+
+  function addDemoLast() {
+    previousLast.current = project.last;
+    updateLast({ ...createDefaultLastLayer(), enabled: true });
+    setActiveModel('last'); setInspector('transform'); setResetToken(n => n + 1);
+    notify('비교용 데모 라스트를 추가했습니다. 실제 신골 치수를 복원한 모델은 아닙니다.');
   }
 
   async function importProject(file: File) {
@@ -265,9 +320,17 @@ export default function Home() {
 
   async function importImage(file: File, key: PlaneKey) {
     await runTask('참조 이미지를 불러오는 중', async () => {
-      const image = await readImageFile(file); updatePlane(key, { image, visible: true });
+      const image = await readImageFile(file);
+      const current = currentProject.current;
+      const next = { ...current, planes: { ...current.planes, [key]: { ...current.planes[key], image, visible: true } } };
+      checkProjectCapacity(next); setProject(next);
       setSelectedPlane(key); notify(`${PLANE_LABELS[key].name} 이미지를 적용했습니다.`);
     });
+  }
+
+  // Changed: reject combined assets before replacing a recoverable workspace.
+  function checkProjectCapacity(next: LastProject) {
+    if (estimateProjectBytes(next) > MAX_PROJECT_BYTES) throw new Error('두 모델과 참조 이미지를 합친 프로젝트가 30 MB를 초과합니다. 더 작은 파일을 사용하세요. 현재 작업은 유지했습니다.');
   }
 
   function selectImage(key: PlaneKey) { uploadPlane.current = key; imageInput.current?.click(); }
@@ -279,7 +342,7 @@ export default function Home() {
       settings: { ...previous.settings, sampleKind: kind, modelPosition: [0, 0, 0], modelRotation: [0, 0, 0], modelScale: 1, modelUnits: 'mm', modelUp: 'z', showLast: true, view: 'iso' },
       planes: Object.fromEntries(PLANE_KEYS.map(key => [key, { ...previous.planes[key], visible: false }])) as LastProject['planes'],
     }));
-    setMeasure(false); setDistance(null); setResetToken(n => n + 1); setModal(null); setMobilePanel(null);
+    setActiveModel('shoe'); setMeasure(false); setDistance(null); setResetToken(n => n + 1); setModal(null); setMobilePanel(null);
     notify(`${sample.name} 신발 샘플을 적용했습니다.`);
   }
 
@@ -290,16 +353,17 @@ export default function Home() {
     });
   }
 
-  async function acceptFile(e: ChangeEvent<HTMLInputElement>, type: 'model' | 'project' | 'image') {
+  async function acceptFile(e: ChangeEvent<HTMLInputElement>, type: 'model' | 'last' | 'project' | 'image') {
     const file = e.target.files?.[0]; e.target.value = '';
     if (!file) return;
     if (type === 'model') await importModel(file);
+    else if (type === 'last') await importLast(file);
     else if (type === 'project') await importProject(file);
     else await importImage(file, uploadPlane.current);
   }
 
   async function handleDrop(file: File) {
-    if (/\.(stl|obj|glb)$/i.test(file.name)) await importModel(file);
+    if (/\.(stl|obj|glb)$/i.test(file.name)) await (activeModel === 'last' ? importLast(file) : importModel(file));
     else if (/\.json$/i.test(file.name)) await importProject(file);
     else if (/\.(png|jpe?g|webp)$/i.test(file.name)) await importImage(file, selectedPlane);
     else notify('STL·OBJ·GLB, PNG·JPG·WebP 또는 프로젝트 JSON 파일을 사용하세요.', 'error');
@@ -355,12 +419,17 @@ export default function Home() {
   const settings = project.settings;
   const sampleDefinition = SHOE_SAMPLES.find(sample => sample.id === (settings.sampleKind ?? DEFAULT_SAMPLE_KIND))!;
   const modelName = project.model?.name ?? `${sampleDefinition.name} · 샘플`;
+  const editingLast = activeModel === 'last' && project.last.enabled;
+  const target = editingLast ? project.last : { position: settings.modelPosition, rotation: settings.modelRotation, scale: settings.modelScale, units: settings.modelUnits, up: settings.modelUp, opacity: settings.lastOpacity, wireframe: settings.wireframe };
+  const targetInfo = editingLast ? lastInfo : modelInfo;
+  const lastName = project.last.model?.name ?? '데모 라스트';
   const referencesVisible = PLANE_KEYS.some(key => project.planes[key].visible);
   const selected = project.planes[selectedPlane];
   const importedCount = PLANE_KEYS.filter(key => project.planes[key].image).length;
 
   return <div className="studio-app">
     <input ref={modelInput} type="file" accept=".stl,.obj,.glb" className="hidden-input" onChange={e => void acceptFile(e, 'model')} />
+    <input ref={lastInput} type="file" accept=".stl,.obj,.glb" className="hidden-input" onChange={e => void acceptFile(e, 'last')} />
     <input ref={projectInput} type="file" accept=".json,.laststudio.json" className="hidden-input" onChange={e => void acceptFile(e, 'project')} />
     <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/webp" className="hidden-input" onChange={e => void acceptFile(e, 'image')} />
     <header className="app-header">
@@ -381,18 +450,28 @@ export default function Home() {
           <button className="icon-button desktop-only" onClick={() => setModal('reset')} aria-label="새 샘플 프로젝트"><Plus size={17} /></button>
         </div>
         <div className="workspace-item"><span className="workspace-icon"><Layers size={18} /></span><div><strong>신발 디자인</strong><span>다측면 & 라스트</span></div><ChevronDown size={14} /></div>
-        <div className="section-label"><span>3D 모델</span><span className="count-badge">01</span></div>
+        <div className="section-label"><span>신발 모델</span><button className="text-button" onClick={() => { setActiveModel('shoe'); setInspector('transform'); }}>정렬</button></div>
         <div className="model-card">
           <div className="model-card-head"><span className="file-icon"><Box size={21} strokeWidth={1.4} /></span>
             <div><strong title={modelName}>{modelName}</strong><span>{project.model ? `${project.model.format.toUpperCase()} · 사용자 모델` : `${sampleDefinition.englishName} · 개념 모델`}</span></div>
             <button className={`icon-button ${settings.showLast ? 'is-visible' : ''}`} onClick={() => updateSettings({ showLast: !settings.showLast })}
-              aria-label={settings.showLast ? '모델 숨기기' : '모델 표시'} aria-pressed={settings.showLast}>{settings.showLast ? <Eye size={16} /> : <EyeOff size={16} />}</button>
+              aria-label={settings.showLast ? '신발 숨기기' : '신발 표시'} aria-pressed={settings.showLast}>{settings.showLast ? <Eye size={16} /> : <EyeOff size={16} />}</button>
           </div>
           <div className="model-dimensions">{modelInfo.dimensions.map(n => n.toFixed(1)).join(' × ')} <span>mm</span></div>
-          <button className="button model-upload" onClick={() => modelInput.current?.click()} disabled={!!busy}><Upload size={14} />모델 불러오기<ArrowUpRight size={14} /></button>
+          <button className="button model-upload" onClick={() => modelInput.current?.click()} disabled={!!busy}><Upload size={14} />신발 불러오기<ArrowUpRight size={14} /></button>
           <div className="file-formats">STL · OBJ · GLB<span>최대 15 MB</span></div>
         </div>
         <button className="button sample-library-button" onClick={() => setModal('samples')}><Grid3X3 size={14} />신발 샘플 5종<ArrowUpRight size={14} /></button>
+        <div className="section-label"><span>라스트 모델</span>{project.last.enabled && <button className="text-button" onClick={() => { setActiveModel('last'); setInspector('transform'); }}>정렬</button>}</div>
+        <div className="model-card last-model-card">
+          {project.last.enabled ? <>
+            <div className="model-card-head"><span className="file-icon"><Box size={21} strokeWidth={1.4} /></span><div><strong title={lastName}>{lastName}</strong><span>{project.last.model ? `${project.last.model.format.toUpperCase()} · 사용자 라스트` : '비교용 예시 · 실측 신골 아님'}</span></div>
+              <button className="icon-button" onClick={() => updateLast({ visible: !project.last.visible })} aria-label={project.last.visible ? '라스트 숨기기' : '라스트 표시'} aria-pressed={project.last.visible}>{project.last.visible ? <Eye size={16} /> : <EyeOff size={16} />}</button></div>
+            <div className="model-dimensions">{lastInfo ? lastInfo.dimensions.map(n => n.toFixed(1)).join(' × ') : '모델 준비 중'} <span>{lastInfo && 'mm'}</span></div>
+          </> : <p className="section-description">신발 안에 비교할 신골을 추가하세요.</p>}
+          <button className="button model-upload" onClick={() => lastInput.current?.click()} disabled={!!busy}><Upload size={14} />라스트 불러오기<ArrowUpRight size={14} /></button>
+          <div className="last-model-actions"><button className="text-button" onClick={addDemoLast} disabled={!!busy}>데모 라스트</button>{project.last.enabled && <button className="text-button" onClick={() => { updateLast({ enabled: false }); setActiveModel('shoe'); }}><X size={12} />제거</button>}</div>
+        </div>
         <div className="section-label"><span>참조 이미지</span><span className="count-badge">{String(importedCount).padStart(2, '0')} / 04</span></div>
         <div className="plane-list">{PLANE_KEYS.map(key => <div key={key} className={`plane-row ${selectedPlane === key ? 'selected' : ''}`}>
           <button className="plane-select" onClick={() => { setSelectedPlane(key); setInspector('view'); }} aria-pressed={selectedPlane === key}>
@@ -437,14 +516,16 @@ export default function Home() {
           </div>
           <div className="viewport-canvas-area">
             {ready && <LastViewport project={project} onModelInfo={modelChanged} onError={reportError}
-              measure={measure} onMeasure={measurementChanged} resetToken={resetToken} screenshotToken={screenshotToken} onModelLoaded={modelLoaded} onRenderMode={setRenderMode} onCaptureReady={captureReady} />}
+              measure={measure} onMeasure={measurementChanged} resetToken={resetToken} screenshotToken={screenshotToken} onModelLoaded={modelLoaded} onRenderMode={setRenderMode} onCaptureReady={captureReady}
+              onLastInfo={setLastInfo} onLastError={reportLastError} onLastLoaded={lastLoaded} />}
             <div className="viewport-top-label"><span className="view-dot" /><span>{VIEWS.find(v => v.key === settings.view)?.axis}</span><span className="label-divider" />{settings.orthographic || settings.view !== 'iso' ? '정사영' : '원근 뷰'}{renderMode === 'software' && <span title="이 브라우저에서는 3D 형상을 호환 모드로 표시합니다"> · 호환 렌더링</span>}</div>
             {!project.model && <div className="sample-label">{sampleDefinition.englishName.toUpperCase()}<span>신발 개념 샘플 · 제조 검증 전</span></div>}
+            {project.last.enabled && <div className="model-comparison-legend"><span className="shoe-legend-dot" />신발<span className="last-legend-dot" />{lastName}</div>}
             {(!ready || busy) && <div className="loading-overlay"><Loader2 className="spin" size={24} /><span>{busy || '작업 공간을 준비하는 중'}</span></div>}
             {isDragging && <div className="drop-overlay"><Upload size={34} /><strong>여기에 파일을 놓으세요</strong><span>3D 모델 · 프로젝트 · {PLANE_LABELS[selectedPlane].name} 참조 이미지</span></div>}
             <div className="canvas-actionbar"><button className={referencesVisible ? 'active' : ''} onClick={toggleReferences} aria-pressed={referencesVisible}><Layers size={17} /><span>참조 이미지</span></button><span className="toolbar-separator" /><button className={measure ? 'active' : ''} onClick={() => setMeasure(v => !v)} aria-pressed={measure}><Ruler size={17} /><span>거리 측정</span></button>
               <span className="toolbar-separator" /><button onClick={() => setModal('capture')} disabled={!ready || !!busy || !captureAvailable}><Camera size={17} /><span>PNG 저장</span></button></div>
-            {measure && <div className="measure-readout" role="status"><Ruler size={15} />{distance === null ? '모델 표면에서 두 점을 선택하세요' : <><strong>{distance.toFixed(2)}</strong> mm<span>다시 선택하면 새로 측정합니다</span></>}</div>}
+            {measure && <div className="measure-readout" role="status"><Ruler size={15} />{distance === null ? '신발 표면에서 두 점을 선택하세요' : <><strong>{distance.toFixed(2)}</strong> mm<span>다시 선택하면 새로 측정합니다</span></>}</div>}
           </div>
           <div className="viewport-footer"><span className="mouse-hint"><Move size={13} />드래그: 회전<span>·</span>휠: 확대<span>·</span>우클릭: 이동</span>
             <span className="touch-hint">한 손가락: 회전 · 두 손가락: 확대·이동</span><span className="unit-indicator">단위 <b>mm</b></span></div>
@@ -467,7 +548,8 @@ export default function Home() {
           <section className="inspector-section"><h2>평면 배치<span className="subtle-icon"><Layers size={15} /></span></h2>
             <RangeField label="면 간격" value={settings.gap} max={120} unit="mm" onChange={gap => updateSettings({ gap })} />
             <RangeField label="이미지 불투명도" value={settings.imageOpacity * 100} unit="%" onChange={v => updateSettings({ imageOpacity: v / 100 })} />
-            <RangeField label="모델 불투명도" value={settings.lastOpacity * 100} min={5} unit="%" onChange={v => updateSettings({ lastOpacity: v / 100 })} />
+            <RangeField label="신발 불투명도" value={settings.lastOpacity * 100} min={5} unit="%" onChange={v => updateSettings({ lastOpacity: v / 100 })} />
+            {project.last.enabled && <RangeField label="라스트 불투명도" value={project.last.opacity * 100} min={5} unit="%" onChange={v => updateLast({ opacity: v / 100 })} />}
           </section>
           <section className="inspector-section"><h2>기준 프레임<span className="unit-label">mm</span></h2>
             <p className="section-description">이미지가 배치되는 공간의 실제 크기</p>
@@ -483,31 +565,35 @@ export default function Home() {
           <section className="inspector-section"><h2>화면 표시</h2><Toggle label="바닥 그리드" checked={settings.grid} onChange={grid => updateSettings({ grid })} />
             <Toggle label="XYZ 좌표축" checked={settings.axes} onChange={axes => updateSettings({ axes })} />
             <Toggle label="기준 프레임" checked={settings.bounds} onChange={bounds => updateSettings({ bounds })} />
-            <Toggle label="모델 와이어프레임" checked={settings.wireframe} onChange={wireframe => updateSettings({ wireframe })} />
+            <Toggle label="신발 와이어프레임" checked={settings.wireframe} onChange={wireframe => updateSettings({ wireframe })} />
+            {project.last.enabled && <Toggle label="라스트 와이어프레임" checked={project.last.wireframe} onChange={wireframe => updateLast({ wireframe })} />}
           </section>
         </> : <>
+          <section className="inspector-section"><h2>정렬할 모델</h2><div className="model-target-tabs" role="group" aria-label="정렬 대상">
+            <button className={!editingLast ? 'active' : ''} aria-pressed={!editingLast} onClick={() => setActiveModel('shoe')}>신발</button><button className={editingLast ? 'active' : ''} aria-pressed={editingLast} disabled={!project.last.enabled} onClick={() => setActiveModel('last')}>라스트</button></div>
+            <p className="section-description">{editingLast ? lastName : modelName}</p></section>
           <section className="inspector-section"><h2>원본 좌표계<span className="subtle-icon"><Box size={15} /></span></h2>
-            <div className="select-row"><label>파일 단위<select value={settings.modelUnits} onChange={e => updateSettings({ modelUnits: e.target.value as SceneSettings['modelUnits'] })}>
+            <div className="select-row"><label>파일 단위<select value={target.units} onChange={e => updateTarget({ units: e.target.value as SceneSettings['modelUnits'] })}>
               <option value="mm">밀리미터 (mm)</option><option value="cm">센티미터 (cm)</option><option value="m">미터 (m)</option><option value="in">인치 (in)</option></select></label></div>
-            <div className="select-row"><label>원본의 위쪽 방향<select value={settings.modelUp} onChange={e => updateSettings({ modelUp: e.target.value as 'z' | 'y' })}>
+            <div className="select-row"><label>원본의 위쪽 방향<select value={target.up} onChange={e => updateTarget({ up: e.target.value as 'z' | 'y' })}>
               <option value="z">Z축 위쪽</option><option value="y">Y축 위쪽</option></select></label></div>
             <p className="section-description">불러온 형상은 XY 중심과 바닥 Z=0에 정렬됩니다. STL·OBJ의 단위를 확인하세요.</p>
           </section>
           <section className="inspector-section"><h2>위치<span className="subtle-icon"><Move size={15} /></span></h2>
-            <VectorFields label="위치" unit="" value={settings.modelPosition} onChange={modelPosition => updateSettings({ modelPosition })} />
+            <VectorFields label="위치" unit="" value={target.position} onChange={position => updateTarget({ position })} />
             <p className="section-description">X 길이 · Y 폭 · Z 높이 / mm</p>
           </section>
           <section className="inspector-section"><h2>회전<span className="unit-label">°</span></h2>
-            <VectorFields label="회전" unit="" value={settings.modelRotation} min={-360} max={360} onChange={modelRotation => updateSettings({ modelRotation })} />
+            <VectorFields label="회전" unit="" value={target.rotation} min={-360} max={360} onChange={rotation => updateTarget({ rotation })} />
             <div className="rotate-buttons">{['X', 'Y', 'Z'].map((axis, index) => <button key={axis} onClick={() => {
-              const next = [...settings.modelRotation] as Vec3; next[index] = (next[index] + 90) % 360; updateSettings({ modelRotation: next });
+              const next = [...target.rotation] as Vec3; next[index] = (next[index] + 90) % 360; updateTarget({ rotation: next });
             }}><RotateCw size={12} />{axis} 90°</button>)}</div>
           </section>
-          <section className="inspector-section"><h2>균일 배율</h2><NumberField label="전체 배율" value={settings.modelScale} min={0.001} max={1000} step={0.01} suffix="×" onChange={modelScale => updateSettings({ modelScale })} />
+          <section className="inspector-section"><h2>균일 배율</h2><NumberField label="전체 배율" value={target.scale} min={0.001} max={1000} step={0.01} suffix="×" onChange={scale => updateTarget({ scale })} />
             <p className="section-description">가로·세로·높이의 비율을 유지합니다.</p></section>
-          <section className="inspector-section"><h2>현재 모델 크기</h2><div className="size-readout">{['길이 X', '폭 Y', '높이 Z'].map((label, i) => <div key={label}><span>{label}</span><strong>{modelInfo.dimensions[i].toFixed(2)}<small>mm</small></strong></div>)}</div>
-            {modelInfo.triangles > 0 && <p className="section-description">{modelInfo.triangles.toLocaleString('ko-KR')} triangles</p>}
-            <button className="button button-outline reset-transform" onClick={() => updateSettings({ modelPosition: [0, 0, 0], modelRotation: [0, 0, 0], modelScale: 1 })}><RotateCcw size={14} />정렬값 초기화</button>
+          <section className="inspector-section"><h2>현재 {editingLast ? '라스트' : '신발'} 크기</h2><div className="size-readout">{['길이 X', '폭 Y', '높이 Z'].map((label, i) => <div key={label}><span>{label}</span><strong>{targetInfo?.dimensions[i].toFixed(2) ?? '—'}<small>mm</small></strong></div>)}</div>
+            {!!targetInfo?.triangles && <p className="section-description">{targetInfo.triangles.toLocaleString('ko-KR')} triangles</p>}
+            <button className="button button-outline reset-transform" onClick={() => updateTarget({ position: [0, 0, 0], rotation: [0, 0, 0], scale: 1 })}><RotateCcw size={14} />정렬값 초기화</button>
           </section>
         </>}
         <div className="inspector-note"><span className="note-symbol">i</span><p>이미지 윤곽과 라스트를 비교하는 도구입니다. 실제 설계에는 치수와 여유 공간을 함께 검토하세요.</p></div>
@@ -516,7 +602,7 @@ export default function Home() {
     {mobilePanel && <button className="mobile-scrim" aria-label="패널 닫기" onClick={() => setMobilePanel(null)} />}
     {notice && <div className={`toast ${notice.type}`} role={notice.type === 'error' ? 'alert' : 'status'}>{notice.type === 'success' ? <Check size={17} /> : <CircleHelp size={17} />}<span>{notice.message}</span><button aria-label="알림 닫기" onClick={() => setNotice(null)}><X size={15} /></button></div>}
     <Dialog open={modal === 'share'} title="같은 형상을, 함께 검토하세요" onClose={() => setModal(null)}>
-      <p className="dialog-description">현재 이미지, 3D 모델 또는 선택한 샘플 종류, 정렬값을 하나의 프로젝트로 저장합니다.</p>
+      <p className="dialog-description">참조 이미지, 신발과 라스트 모델, 각각의 정렬값을 하나의 프로젝트로 저장합니다.</p>
       <div className="share-preview"><span className="share-icon"><Box size={28} strokeWidth={1.3} /></span><div><strong>{project.title}</strong><p>{modelName}<span>참조 이미지 {importedCount}개</span></p></div></div>
       <div className="share-section"><h3><Link2 size={17} />저장된 프로젝트 링크</h3><p>현재 상태를 서버에 저장합니다. 이후 수정한 내용은 새 링크로 공유하세요.</p>
         {shareUrl ? <div className="share-link-row"><input aria-label="공유 링크" readOnly value={shareUrl} onFocus={e => e.target.select()} /><button className="button button-primary" onClick={() => void copyLink()}>{copied ? <Check size={15} /> : <Copy size={15} />}{copied ? '복사됨' : '복사'}</button></div> :
@@ -526,10 +612,10 @@ export default function Home() {
       <div className="share-section file-share"><div><h3><FileJson size={17} />프로젝트 파일</h3><p>이미지와 모델을 포함한 파일을 전달할 수도 있습니다.</p></div><button className="button button-outline" onClick={exportFile}><Download size={16} />파일 저장</button></div>
     </Dialog>
     <Dialog open={modal === 'help'} title="Last Studio 사용 가이드" onClose={() => setModal(null)}>
-      <p className="dialog-description">네 방향의 이미지와 신발 샘플 또는 실제 라스트를 같은 좌표계에서 검토합니다.</p>
-      <ol className="guide-steps"><li><span>01</span><div><h3>신발 샘플을 고르거나 모델을 불러옵니다</h3><p>화면 위에서 신발 5종을 선택하거나 STL·OBJ·GLB를 불러오세요. GLB는 미터·Y축, STL은 mm·Z축을 기본으로 제안합니다. 실제 파일의 단위와 축을 확인하세요.</p></div></li>
+      <p className="dialog-description">네 방향의 이미지, 신발, 라스트를 같은 좌표계에서 검토합니다.</p>
+      <ol className="guide-steps"><li><span>01</span><div><h3>신발과 라스트를 추가합니다</h3><p>신발 5종을 선택하거나 신발 파일을 불러오세요. 왼쪽 ‘라스트 불러오기’로 신골을 별도로 추가합니다. GLB는 미터·Y축, STL은 mm·Z축을 기본으로 제안합니다. 실제 파일의 단위와 축을 확인하세요.</p></div></li>
         <li><span>02</span><div><h3>각 방향의 이미지를 배치합니다</h3><p>측면·윗면·정면·후면을 선택해 이미지를 넣으세요. 대상 외곽에 맞춰 자른 정사영 이미지가 비교하기 좋습니다.</p></div></li>
-        <li><span>03</span><div><h3>크기와 위치를 맞춥니다</h3><p>기준 프레임은 이미지의 실제 크기입니다. 모델 정렬에서 위치·회전·균일 배율을 조절하고, 면 간격과 투명도로 형상을 비교하세요.</p></div></li>
+        <li><span>03</span><div><h3>크기와 위치를 맞춥니다</h3><p>‘모델 정렬’에서 신발 또는 라스트를 선택해 위치·회전·균일 배율을 각각 조절합니다. ‘보기 설정’의 두 불투명도 조절로 겹쳐진 형상을 비교하세요.</p></div></li>
         <li><span>04</span><div><h3>이미지를 캡처하고 프로젝트를 공유합니다</h3><p>‘PNG 저장’에서 모델의 네 방향 이미지를 개별 PNG 또는 ZIP으로 저장하세요. ‘공유’에서는 현재 프로젝트의 링크를 만들 수 있고, 프로젝트 파일은 ‘열기’로 복원합니다.</p></div></li></ol>
       <div className="guide-note"><Ruler size={18} /><p>거리 측정은 모델 표면의 두 점 사이 직선거리입니다. 둘레·곡면 길이나 착화 적합성을 판정하지 않습니다.</p></div>
       <div className="guide-note"><ImageIcon size={18} /><p>기본 이미지는 제공된 치수표의 도면 영역입니다. 신발 5종은 독립적인 개념 샘플이며, 참조 사진이나 실제 라스트를 복원한 형상이 아닙니다.</p></div>
