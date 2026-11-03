@@ -83,8 +83,8 @@ img { max-width: 100%; }
 .app-header { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 22px; height: 68px; padding: 0 24px; border-bottom: 1px solid var(--studio-border); background: #fcfdf9; }
 .brand { display: inline-flex; align-items: center; gap: 10px; flex-shrink: 0; min-width: 205px; }
 .brand-mark { display: grid; place-items: center; width: 34px; height: 37px; color: var(--studio-green); }
-.brand > span:last-child { font-size: 25px; line-height: .95; font-weight: 720; letter-spacing: -1.2px; }
-.brand-light { margin-left: 3px; font-weight: 380; }
+/* Changed: accommodate the full product name without crowding header controls. */
+.brand > span:last-child { font-size: 21px; line-height: 1.1; font-weight: 720; letter-spacing: -.8px; }
 .brand small { display: block; margin-top: 7px; color: #69765f; font-size: 8px; font-weight: 550; line-height: 1; letter-spacing: 1.25px; }
 .header-divider { height: 25px; width: 1px; margin-left: -1px; background: var(--studio-border); }
 .header-project { display: flex; align-items: center; gap: 9px; color: #66735f; font-size: 12px; }
@@ -691,13 +691,12 @@ img { max-width: 100%; }
   .brand { min-width: 0; gap: 5px; }
   .brand-mark { width: 28px; height: 32px; }
   .brand-mark svg { width: 21px; height: 21px; }
-  .brand > span:last-child { font-size: 22px; letter-spacing: -1px; }
+  .brand > span:last-child { max-width: 115px; font-size: 16px; line-height: 1.15; letter-spacing: -.5px; }
   .brand small { display: none; }
-  .brand-light { margin-left: 2px; }
   .header-actions { gap: 5px; }
   .header-actions .button { min-height: 33px; padding: 7px 9px; gap: 6px; font-size: 11px; }
-  .header-actions .button-quiet span, .header-actions .save-button span { display: none; }
-  .header-actions .button-quiet, .header-actions .save-button { min-width: 31px; padding-right: 7px; padding-left: 7px; }
+  .header-actions .button span { display: none; }
+  .header-actions .button { min-width: 31px; padding-right: 7px; padding-left: 7px; }
   .workspace-shell { min-height: calc(100dvh - 62px); }
   .main-workspace { padding: 22px 16px 18px; }
   .workspace-breadcrumb { margin-bottom: 6px; font-size: 11px; }

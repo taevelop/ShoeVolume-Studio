@@ -33,7 +33,7 @@ export function openStudioDatabase(): Promise<IDBDatabase> {
     let request: IDBOpenDBRequest;
     try { request = indexedDB.open('last-studio', 2); }
     catch (cause) { fail(cause); return; }
-    request.onblocked = () => fail(new Error('다른 탭이 이전 저장소를 사용하고 있습니다. Last Studio의 다른 탭을 닫거나 새로고침한 뒤 다시 시도해 주세요.'));
+    request.onblocked = () => fail(new Error('다른 탭이 이전 저장소를 사용하고 있습니다. 프로그램의 다른 탭을 닫거나 새로고침한 뒤 다시 시도해 주세요.')); // Changed
     request.onupgradeneeded = () => {
       const db = request.result;
       upgrading = db;

@@ -1,133 +1,93 @@
-# vinext-starter
+# ShoeVolume Studio
 
-A clean full-stack starter running on [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and Drizzle support.
+신발의 다측면 참조 이미지와 3D 모델을 같은 XYZ 공간에 배치하고, 형상·치수·단면을 비교하는 웹 작업실입니다. 기존 **Last Studio**에서 이름을 변경했습니다.
 
-## Prerequisites
+- **저장소 소스 버전:** 1.8.1
+- **기존 배포 사이트:** [Last Studio(v1.8.0)](https://last-studio-tae.aquaitem.chatgpt.site/)
+- **변경 내역:** [CHANGELOG.md](CHANGELOG.md)
+- **원본·GitHub 커밋 대응:** [docs/version-history.json](docs/version-history.json)
 
-- Node.js `>=22.13.0`
-- Portable: Windows, macOS, or Linux; no Bash required
-- Managed Linux: managed Linux runtime with Bash, `flock`, `curl`, `sha256sum`, and GNU `timeout`
-- Git and `tar` (including Windows `tar.exe`) are required for publishing; portable publication does not require Bash
+v1.8.1의 이름 변경은 GitHub 소스에 반영됩니다. **이번 GitHub 이전은 기존 Sites 배포를 변경하지 않으며**, 운영 사이트에는 아직 적용되지 않았습니다.
 
-## Sites Lifecycle
+## 구현 기능
 
-The Sites initializer copies the shared starter and selects managed-linux only when `SITES_MANAGED_LINUX_CONTAINER=1`; otherwise it selects portable. It saves the selection only in ignored `.sites-runtime/execution-profile.json`. Both profiles copy/configure first, then use the plugin's separate `install-dependencies.mjs` step to measure installation independently. Edit source under `app/` and follow the Sites skill for installation, preview, builds, and publishing.
+| 구분 | 기능 |
+| --- | --- |
+| 참조면 | 측면·윗면·정면·후면 이미지의 XYZ 배치, 크기·간격·투명도·표시 조절 |
+| 모델 | STL·OBJ·GLB 불러오기, 신발과 라스트의 독립 위치·회전·배율·표시 설정 |
+| 샘플 | 로퍼·스니커즈·메리제인·샌들·앵클부츠 5종과 기본 GLB·STL 다운로드 |
+| 치수 편집 | 내장 샘플의 길이·발볼 폭·뒤꿈치 폭·앞코 높이·발등 높이 조절, 편집 모델 STL 저장 |
+| 형상 검토 | 거리 측정, X·Y·Z 단면 윤곽 비교, 같은 단면의 최소 경계 거리 및 교차·접촉 표시 |
+| 참조 이미지 생성 | 4방향 정사영 PNG, 1024·2048 해상도, 흰색·투명 배경, ZIP·치수 메타데이터 저장 |
+| 자동 배치 | 캡처 이미지를 실제 mm 크기와 모델 중심 기준으로 참조면에 적용 |
+| 저장·공유 | 프로젝트 JSON 저장·열기, 브라우저 자동 저장, 서버에 저장한 프로젝트 링크 공유 |
+| 설계 이력 | 브라우저별 최대 20개 설계안, 복원 전 백업, 저장본 겹침 비교, 변경 항목 표시 |
+| 작업 화면 | 회전·확대·축소, 정사영·사시, Workspace·Inspector 접기·펼치기 |
 
-Run `node <plugin-root>/scripts/configure-execution-profile.mjs` only when the profile is unknown for the current checkout and environment. Profile changes do not alter tracked source or require reinstalling otherwise-valid dependencies; restart an existing preview to use the new selection. Do not commit or upload `.sites-runtime/`.
+좌표는 **X = 신발 길이, Y = 좌우 폭, Z = 높이**, 기본 길이 단위는 **mm**입니다. 제공된 신발 외곽 기준 치수는 **253 × 105.31 × 79.4 mm**이며 실제 신골 치수와 구분합니다.
 
-This starter does not use `wrangler.jsonc`.
+## 현재 범위와 한계
 
-Publish archives outside the source checkout or under its ignored `outputs/` directory. Local `.env*`, `.dev.vars*`, TypeScript build state, and tool runtime directories are ignored; keep the hosting manifest, migrations, and authored scripts in source control.
+- 실제 측정된 신골 3D 파일은 제공되지 않았습니다. 포함된 데모 라스트와 내장 신발 샘플은 **배치·치수·형상 검토를 위한 개념 모델**입니다.
+- 참조 사진과 등록 치수만으로 실제 내부 공간이나 제조에 필요한 정확한 곡면을 복원하지 않습니다.
+- 단면 거리는 선택한 평면에서 계산한 경계 간 거리입니다. 전체 3D 여유 공간, 착화 적합성 또는 제조 가능성을 판정하는 값이 아닙니다.
+- **금형 자동 생성, 파팅·구배·수축률 설계, 금형 분할, 가공 경로 생성 등 제조 CAD/CAM 기능은 구현되지 않았습니다.**
+- 샘플 치수 편집은 내장 5종에 적용됩니다. 불러온 임의 모델을 동일한 방식으로 변형하는 기능은 없습니다.
+- 설계 버전은 현재 브라우저의 IndexedDB에 저장됩니다. 다른 기기에서 이어 보려면 프로젝트 파일이나 공유 링크를 사용합니다.
+- 링크 공유에는 Cloudflare R2 저장소가 필요합니다. 로컬 실행의 저장소와 운영 사이트 저장소는 별개이며, GitHub에 코드를 푸시하는 것만으로 운영 사이트가 배포되지는 않습니다.
 
-`install:ci` runs `npm ci` once against the shared lockfile, disables parent-workspace discovery, and includes required dev/optional dependencies despite production/omit settings. Sharp defaults to prebuilt binaries unless explicitly configured otherwise. Do not overlap installers.
+## 로컬 실행
 
-- **Portable:** Preserve host HOME, npm cache, registry, proxy, temporary paths, retry/concurrency settings, and lifecycle-script policy. Use `--prefer-offline --no-audit --no-fund`.
-- **Managed Linux:** Use the existing project-local HOME/cache/tmp setup and Linux install lock, tarball preflight, and timeout. Restore the image-seeded npm cache only when its lockfile hash matches; retain network fallback. Builds keep their existing timeout. These helpers are not invoked by the portable profile.
+### 준비
 
-`scripts/sites-env.mjs` preserves the caller's HOME, npm cache, proxy, XDG, and temporary-directory configuration while defaulting Wrangler and Miniflare state to the checkout. If npm reports an unwritable cache, select a writable path with `npm_config_cache` for that install. The `dev` and `start` scripts also keep Wrangler logs inside the checkout. Generated `.sites-runtime/` and `.wrangler/` directories are disposable and ignored by Git.
-
-On portable, `npm run dev` uses `vinext dev` with HMR, starting at port 5173. Vinext records the running server in ignored `.vinext/` state, rejects an ordinary duplicate launch, and recovers stale state after a stopped process; exactly simultaneous starts can race. Pass `--port <port>` or `--hostname <host>` after `npm run dev --` when needed; keep portable previews on loopback.
-
-For managed Linux browser QA, follow the Sites skill's managed preview reference. The daemon runs the project's Vite dev script with `--host 0.0.0.0 --port 4173 --strictPort`; use the CLI's returned URL. The ignored local profile survives the daemon's cleared environment.
-
-The portable profile simulates ChatGPT sign-in only for loopback development requests. Visit `/signin-with-chatgpt?return_to=/` to sign in as `local_seedy` (`seedy@sites.test`, display name `Seedy`) and `/signout-with-chatgpt?return_to=/` to sign out. The development cookie preserves that identity across server restarts. Mock auth is disabled in the managed-linux profile and is not included in production builds; hosted authentication remains dispatch-owned.
-
-The Worker uses `vinext/server/fetch-handler`, including Vinext's config-aware image handling. After building, `npm start` runs that Worker locally through Wrangler on `127.0.0.1`, sharing `.wrangler/state` with dev preview and local D1 migrations; it does not deploy the site or simulate sign-in. Use the URL printed by the server. Pass `npm start -- --port <port>` to select a different built-preview port.
-
-Local previews use Miniflare's placeholder `Request.cf` metadata without a network lookup. Set `CLOUDFLARE_CF_FETCH_ENABLED=true` to opt into fetching preview metadata; this setting does not change hosted request metadata.
-
-Local tool usage metrics are disabled by default. Set `WRANGLER_SEND_METRICS=true` to opt in.
-
-## Included Shape
-
-- edit site code under `app/`
-- `app/chatgpt-auth.ts` provides optional dispatch-owned ChatGPT sign-in helpers
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `worker/index.ts` is the production Worker entrypoint and preserves request-scoped connector bindings
-- `scripts/vite/` contains the maintained Vite integrations and the vendored Sites plugin license
-- `scripts/connector-preview/` contains the local connector preview Worker and session helpers
-- the remaining `scripts/` files select execution profiles and run installation, development, and builds; the plugin's helpers orchestrate the Sites lifecycle
-- `dist/` contains generated deployment output; `.vinext/`, `.wrangler/`, and `.sites-runtime/` contain ignored local tool state
-- `db/index.ts` reads the D1 binding from the Cloudflare Worker environment
-- `db/schema.ts` starts intentionally empty
-- `@cloudflare/workers-types` provides Worker types; `cloudflare-env.d.ts` declares optional `DB`/`BUCKET` bindings—update these declarations if binding names change
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-Signed-in visitors receive both `oai-authenticated-user-id` and `oai-authenticated-user-email`. Private Sites require every visitor to sign in; public Sites may also have anonymous visitors, for whom neither header is present.
-
-The user ID is stable for the same user on the same Site and different across Sites. Use it as the durable user key; use email and name for display or contact purposes.
-
-SIWC-authenticated workspace sites may also receive `oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty `name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by `oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const userId = requestHeaders.get("oai-authenticated-user-id");
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
-```
-
-## Optional Dispatch-Owned ChatGPT Sign-In
-
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs optional or required ChatGPT sign-in:
-
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use the returned `userId` as the stable user key for user-owned records; do not use email as a durable identifier.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send anonymous visitors through Sign in with ChatGPT.
-- In a Server Component, start sign-in with `<a href={chatGPTSignInPath(returnTo)} target="_top">`. The auth helper module is server-only; do not import it into a Client Component.
-- Do not use `fetch`, XHR, a client-side router, or a framework link that can prefetch the sign-in route. SIWC must start as a top-level navigation.
-- Never request the AuthAPI authorization endpoint directly. The dispatch-owned `/signin-with-chatgpt` route must start the SIWC flow.
-- Use `chatGPTSignOutPath(returnTo)` for browser sign-out links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because they depend on per-request identity headers.
-
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the OAuth cookies, and identity header injection. Do not implement app routes for those reserved paths. Routes that do not import and call the helper remain anonymous-compatible.
-
-SIWC establishes identity only; it does not prove workspace membership. Use the Sites hosting platform's access policy controls for workspace-wide restrictions, or enforce explicit server-side membership or allowlist checks.
-
-Use SIWC for account pages, user-specific dashboards, saved records, and write actions tied to the current ChatGPT user. Leave public content anonymous.
-
-## Local D1 migrations
-
-For a D1-backed local preview, generate SQL with `npm run db:generate`. Build once through the Sites skill's build entrypoint (or `npm run build` for standalone use) to generate `dist/server/wrangler.json`, rebuilding if bindings change. From the project root, apply each pending migration in order:
+Node.js **22.13.0 이상**, npm, Git이 필요합니다. 일반 로컬 실행은 Windows·macOS·Linux를 지원합니다.
 
 ```sh
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_example.sql
+git clone https://github.com/taevelop/ShoeVolume-Studio.git
+cd ShoeVolume-Studio
+npm run install:ci
+npm run dev
 ```
 
-Replace the filename with the pending migration and `DB` with your D1 binding name if different. Use `.wrangler/state`, not `.wrangler/state/v3`; Wrangler adds the versioned directories. Do not replay migrations already applied locally. This updates only the preview database; publishing applies production migrations separately.
+터미널에 출력되는 개발 서버 주소로 접속합니다. 일반 로컬 실행의 기본 포트는 `5173`입니다.
 
-## Diagnostic Commands
+### 빌드 및 빌드 결과 확인
 
-- `npm run install:ci`: perform the one locked dependency install
-- `npm run dev`: start the Vite/Vinext development server
-- `npm run build`: build the deployable Sites artifact
-- `npm run start`: preview the built Worker locally with D1/R2 support
-- `npm run db:generate`: generate Drizzle migrations after schema changes
+```sh
+npm run build
+npm start
+```
 
-When using the Sites plugin, follow its skill instructions for installation, builds, and publishing. These npm commands remain available for standalone use.
+`npm start`는 빌드된 Cloudflare Worker를 로컬에서 실행합니다. 운영 사이트에 배포하는 명령은 아닙니다.
 
-The portable build runs Vinext directly without a host `timeout` command. The managed-linux build uses `scripts/build-verified.sh` and its existing `SITES_BUILD_TIMEOUT` setting.
+### 타입 검사 및 자동 테스트
 
-## Learn More
+```sh
+node node_modules/typescript/bin/tsc --noEmit
+node --test
+```
 
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+테스트는 `tests/*.test.mjs`에 있으며 Node 내장 테스트 러너를 사용합니다. `node:module.registerHooks` 사용으로 **Node.js 22.x에서는 22.15.0 이상**이 필요합니다. 프로젝트 검증, 모델 변환, PNG·ZIP 생성, 참조면 등록, 단면 계산, 샘플 변형, 버전 저장·비교를 검사합니다.
+
+## 주요 디렉터리
+
+| 경로 | 역할 |
+| --- | --- |
+| `app/` | 메인 화면, 전역 스타일, 메타데이터, 프로젝트 공유 API |
+| `components/` | 3D 뷰포트, 샘플 선택, 캡처·단면·버전 UI |
+| `lib/` | Three.js 장면, 모델·참조면 처리, 단면 계산, 검증·저장 로직 |
+| `public/references/` | 제공된 참조 이미지와 치수표 |
+| `public/samples/` | 내장 신발 샘플 GLB·STL |
+| `scripts/` | 샘플 생성, 설치·개발·빌드 및 Sites 연동 |
+| `tests/` | Node 내장 러너 기반 자동 테스트 |
+| `worker/` | Cloudflare Worker 진입점 |
+| `.openai/hosting.json` | 기존 Sites 프로젝트와 R2 바인딩 설정 |
+| `docs/` | 실행 환경 상세 안내와 원본·GitHub 이력 대응 |
+
+기술 구성은 **React 19 · TypeScript · Three.js · Vinext · Cloudflare Workers/R2**입니다. Sites 실행 프로필, 로컬 저장소, 인증 및 배포 환경의 상세 내용은 [실행 환경 안내](docs/sites-runtime.md)에 보존했습니다.
+
+## 버전·파일 호환성
+
+제품 버전 `1.8.1`은 프로젝트 데이터 형식 버전과 별개입니다. 기존 파일과 브라우저 저장 데이터를 이어 사용할 수 있도록 `last-studio` 스키마·저장소 이름과 `.laststudio.json` 확장자를 유지합니다.
+
+`1.0.0`~`1.8.0`은 기존 개발 단계에 대응하는 제품 버전입니다. GitHub 이력은 해당 소스 스냅샷을 순서대로 재구성했으므로 GitHub 커밋 SHA·작성 시각은 원본과 다릅니다. 원래 개발일과 원본 SHA는 [변경 내역](CHANGELOG.md), 새 커밋과의 대응은 [이력 데이터](docs/version-history.json)를 참고하세요.

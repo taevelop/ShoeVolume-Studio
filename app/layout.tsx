@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
+import { APP_NAME } from "@/lib/app-info"; // Changed
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Last Studio — 신발 형상 작업실",
+  title: `${APP_NAME} — 신발 형상 작업실`, // Changed
   description: "다측면 이미지와 3D 라스트를 한 공간에서 정렬하고, 비교하고, 공유하는 신발 형상 작업실입니다.",
   icons: {
     icon: "/favicon.svg",

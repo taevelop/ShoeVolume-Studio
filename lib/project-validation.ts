@@ -180,7 +180,7 @@ export function estimateProjectBytes(project: LastProject): number {
 export function validateProject(input: unknown): LastProject {
   const project = record(input, '프로젝트');
   if (project.schema !== 'last-studio' || project.version !== 1) {
-    throw new ProjectValidationError('Last Studio 버전 1 프로젝트 파일을 선택해 주세요.');
+    throw new ProjectValidationError('지원되는 버전 1 프로젝트 파일을 선택해 주세요.'); // Changed
   }
   const raw = record(project.settings, '화면 설정');
   const settings: SceneSettings = {

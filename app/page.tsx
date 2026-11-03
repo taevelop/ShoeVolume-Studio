@@ -32,6 +32,7 @@ import { estimateProjectBytes } from '@/lib/project-validation'; // Changed
 import { applyCapturedReferences } from '@/lib/reference-registration'; // Changed
 import { saveRestoreBackup } from '@/lib/design-versions';
 import { compareProjects } from '@/lib/project-diff';
+import { APP_NAME, APP_VERSION } from '@/lib/app-info'; // Changed
 
 const PLANE_KEYS: PlaneKey[] = ['side', 'top', 'front', 'rear'];
 const VIEWS: { key: ViewKey; label: string; axis: string }[] = [
@@ -523,15 +524,15 @@ export default function Home() {
     <input ref={projectInput} type="file" accept=".json,.laststudio.json" className="hidden-input" onChange={e => void acceptFile(e, 'project')} />
     <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/webp" className="hidden-input" onChange={e => void acceptFile(e, 'image')} />
     <header className="app-header">
-      <a className="brand" href="/" aria-label="Last Studio 홈"><span className="brand-mark"><Box size={22} strokeWidth={1.5} /></span>
-        <span>last<span className="brand-light">studio</span><small>FOOTWEAR DESIGN WORKSPACE</small></span></a>
+      <a className="brand" href="/" aria-label={`${APP_NAME} 홈`}><span className="brand-mark"><Box size={22} strokeWidth={1.5} /></span>
+        <span>{APP_NAME}<small>FOOTWEAR DESIGN WORKSPACE</small></span></a>
       <div className="header-divider" />
-      <div className="header-project"><span className="tiny-dot" /><span>형상 검토</span><span className="version-pill">BETA</span></div>
+      <div className="header-project"><span className="tiny-dot" /><span>형상 검토</span><span className="version-pill">v{APP_VERSION}</span></div>
       <nav className="header-actions" aria-label="프로젝트 작업">
         <button className="button button-quiet" aria-label="버전" onClick={() => setModal('versions')} disabled={!ready || !!busy}><History size={16} /><span>버전</span></button>
-        <button className="button button-quiet" onClick={() => projectInput.current?.click()} disabled={!!busy}><FolderOpen size={16} /><span>열기</span></button>
-        <button className="button button-outline save-button" onClick={exportFile} disabled={!ready || !!busy}><Download size={16} /><span>파일 저장</span></button>
-        <button className="button button-primary" onClick={() => setModal('share')} disabled={!ready || !!busy}><Share2 size={16} /><span>공유</span></button>
+        <button className="button button-quiet" aria-label="열기" onClick={() => projectInput.current?.click()} disabled={!!busy}><FolderOpen size={16} /><span>열기</span></button>
+        <button className="button button-outline save-button" aria-label="파일 저장" onClick={exportFile} disabled={!ready || !!busy}><Download size={16} /><span>파일 저장</span></button>
+        <button className="button button-primary" aria-label="공유" onClick={() => setModal('share')} disabled={!ready || !!busy}><Share2 size={16} /><span>공유</span></button>
       </nav>
     </header>
     <div className={`workspace-shell ${collapsedPanels.sources ? 'sources-collapsed' : ''} ${collapsedPanels.settings ? 'inspector-collapsed' : ''}`}>
@@ -731,7 +732,7 @@ export default function Home() {
       </div>
       <div className="share-section file-share"><div><h3><FileJson size={17} />프로젝트 파일</h3><p>이미지와 모델을 포함한 파일을 전달할 수도 있습니다.</p></div><button className="button button-outline" onClick={exportFile}><Download size={16} />파일 저장</button></div>
     </Dialog>
-    <Dialog open={modal === 'help'} title="Last Studio 사용 가이드" onClose={() => setModal(null)}>
+    <Dialog open={modal === 'help'} title={`${APP_NAME} 사용 가이드`} onClose={() => setModal(null)}>
       <p className="dialog-description">네 방향의 이미지, 신발, 라스트를 같은 좌표계에서 검토합니다.</p>
       <ol className="guide-steps"><li><span>01</span><div><h3>신발과 라스트를 함께 배치합니다</h3><p>신발 5종을 선택하거나 신발 파일을 불러온 뒤, ‘라스트 불러오기’로 신골을 별도로 추가하세요. 오른쪽 ‘정렬’에서 두 모델의 위치·회전·배율을 각각 맞추고 ‘보기’에서 불투명도를 조절합니다. 실제 파일의 단위와 위쪽 축도 확인하세요.</p></div></li>
         <li><span>02</span><div><h3>네 방향 이미지를 참조면에 적용합니다</h3><p>‘PNG 저장’에서 측면·윗면·정면·후면을 생성하고 ‘4면 참조로 적용’을 누르면 캡처 위치와 크기에 맞춰 네 면이 배치됩니다. 개별 PNG와 ZIP으로 저장하거나 직접 준비한 정사영 이미지를 넣을 수도 있습니다.</p></div></li>
