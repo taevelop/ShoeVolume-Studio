@@ -100,7 +100,7 @@ img { max-width: 100%; }
 .icon-button { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid transparent; border-radius: 5px; background: transparent; color: #69765f; }
 .icon-button:hover:not(:disabled), .icon-button.active { background: #e7ede0; color: var(--studio-green); }
 .icon-button.is-visible { color: #69765f; }
-.workspace-shell { display: grid; grid-template-columns: 252px minmax(0, 1fr) 278px; align-items: stretch; min-height: calc(100dvh - 68px); }
+.workspace-shell { --workspace-width: 252px; --inspector-width: 278px; display: grid; grid-template-columns: var(--workspace-width) minmax(0, 1fr) var(--inspector-width); align-items: stretch; min-height: calc(100dvh - 68px); }
 .sources-panel, .inspector-panel { position: sticky; top: 68px; align-self: start; height: calc(100dvh - 68px); min-height: 620px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #d5ddcc transparent; background: #fafbf7; }
 .sources-panel { display: flex; flex-direction: column; padding: 22px 17px 20px; border-right: 1px solid var(--studio-border); }
 .inspector-panel { padding: 22px 20px 20px; border-left: 1px solid var(--studio-border); }
@@ -108,6 +108,22 @@ img { max-width: 100%; }
 .eyebrow { color: #69765f; font-size: 11px; font-weight: 650; letter-spacing: 1.5px; }
 .panel-top .icon-button { width: 24px; height: 24px; }
 .panel-top > svg { color: #69765f; }
+/* Changed: keep the same toggle in a narrow rail while its panel contents are hidden. */
+.panel-heading-actions { display: flex; align-items: center; gap: 4px; }
+.panel-top .panel-visibility-toggle { width: 32px; height: 32px; border-color: #dfe5d8; background: #fcfdf9; }
+.panel-top .panel-visibility-toggle:hover { border-color: #c3d0b8; background: #e7ede0; }
+.panel-visibility-toggle[aria-expanded="false"] { color: var(--studio-green); background: #edf2e6; }
+.panel-body { min-width: 0; }
+.sources-panel > .panel-body { display: flex; flex: 1; flex-direction: column; }
+.inspector-panel .panel-top { justify-content: flex-start; gap: 10px; }
+@media (min-width: 981px) {
+  .workspace-shell.sources-collapsed { --workspace-width: 48px; }
+  .workspace-shell.inspector-collapsed { --inspector-width: 48px; }
+  .sources-collapsed .sources-panel, .inspector-collapsed .inspector-panel { padding: 22px 7px 20px; overflow: hidden; }
+  .sources-collapsed .sources-panel > .panel-body, .inspector-collapsed .inspector-panel > .panel-body,
+  .sources-collapsed .sources-panel .eyebrow, .sources-collapsed .new-project-button, .inspector-collapsed .inspector-panel .eyebrow { display: none; }
+  .sources-collapsed .sources-panel .panel-top, .inspector-collapsed .inspector-panel .panel-top { justify-content: center; gap: 0; }
+}
 .workspace-item { display: flex; align-items: center; gap: 10px; min-height: 58px; margin-top: 14px; padding: 10px 11px; border: 1px solid #dde5d4; border-radius: 7px; background: #edf2e6; }
 .workspace-icon { display: grid; place-items: center; width: 29px; height: 32px; color: #69765f; }
 .workspace-item > div { flex: 1; min-width: 0; }
@@ -623,7 +639,7 @@ img { max-width: 100%; }
   .workspace-status > span:last-child { max-width: 100%; }
 }
 @media (max-width: 1100px) {
-  .workspace-shell { grid-template-columns: 224px minmax(0, 1fr) 246px; }
+  .workspace-shell { --workspace-width: 224px; --inspector-width: 246px; }
   .sources-panel { padding-right: 13px; padding-left: 13px; }
   .inspector-panel { padding-right: 15px; padding-left: 15px; }
   .header-project, .header-divider { display: none; }
@@ -649,8 +665,7 @@ img { max-width: 100%; }
   .inspector-panel.mobile-open { right: 0; display: block; width: 310px; border-left: 1px solid #d8e3cd; }
   .mobile-only { display: inline-flex !important; }
   .desktop-only { display: none !important; }
-  .sources-panel.mobile-open .panel-top .desktop-only { display: inline-flex !important; order: 2; margin-left: auto; margin-right: 8px; }
-  .sources-panel.mobile-open .panel-top .mobile-only { order: 3; }
+  .panel-top .panel-visibility-toggle { width: 40px; height: 40px; }
   .mobile-scrim { position: fixed; inset: 0; z-index: 70; display: block; width: 100%; height: 100%; padding: 0; border: 0; background: #2b3c2a59; backdrop-filter: blur(2px); }
   .main-workspace { padding: 26px 28px 20px; }
   .workspace-heading { margin-bottom: 18px; }

@@ -5,8 +5,8 @@ import type { ChangeEvent, CSSProperties, ReactNode } from 'react';
 import {
   ArrowUpRight, Box, Camera, Check, ChevronDown, CircleHelp, Copy, Download,
   Eye, EyeOff, FileJson, FlipHorizontal2, FolderOpen, Grid3X3, Image as ImageIcon,
-  History, Layers, Link2, Loader2, Maximize2, Move, Plus, RotateCcw, RotateCw, Ruler,
-  Share2, SlidersHorizontal, Slice, Upload, X,
+  History, Layers, Link2, Loader2, Maximize2, Move, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus, RotateCcw, RotateCw, Ruler,
+  Share2, Slice, Upload, X,
 } from 'lucide-react';
 import LastViewport from '@/components/last-viewport';
 import ReferenceDimensions from '@/components/reference-dimensions';
@@ -48,6 +48,17 @@ const SHAPE_FIELDS: { key: keyof SampleShape; label: string }[] = [
 ];
 type ModalKind = 'share' | 'help' | 'references' | 'dimensions' | 'samples' | 'capture' | 'versions' | 'reset' | null; // Changed
 type Notice = { message: string; type: 'success' | 'error' };
+type InspectorTab = 'view' | 'transform' | 'section' | 'shape'; // Changed
+
+// Changed: the same focusable control remains available when its panel is collapsed.
+function PanelVisibilityButton({ side, expanded, controls, className, onClick }: {
+  side: 'left' | 'right'; expanded: boolean; controls: string; className: string; onClick: () => void;
+}) {
+  const Icon = side === 'left' ? (expanded ? PanelLeftClose : PanelLeftOpen) : (expanded ? PanelRightClose : PanelRightOpen);
+  const label = `${side === 'left' ? 'Workspace' : 'Inspector'} ${expanded ? '접기' : '펼치기'}`;
+  return <button type="button" className={`icon-button panel-visibility-toggle ${className}`} title={label}
+    aria-label={label} aria-expanded={expanded} aria-controls={controls} onClick={onClick}><Icon size={18} aria-hidden="true" /></button>;
+}
 
 function NumberField({ label, value, onChange, min = -10000, max = 10000, step = 1, suffix }: {
   label: string; value: number; onChange: (value: number) => void;
@@ -140,10 +151,11 @@ export default function Home() {
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState<Notice | null>(null);
   const [modal, setModal] = useState<ModalKind>(null);
-  const [inspector, setInspector] = useState<'view' | 'transform' | 'section' | 'shape'>('view');
+  const [inspector, setInspector] = useState<InspectorTab>('view');
   const [sectionResult, setSectionResult] = useState<SectionResult | null>(null);
   const [activeModel, setActiveModel] = useState<'shoe' | 'last'>('shoe'); // Changed: independent model controls.
   const [mobilePanel, setMobilePanel] = useState<'sources' | 'settings' | null>(null);
+  const [collapsedPanels, setCollapsedPanels] = useState({ sources: false, settings: false }); // Changed: layout preferences are independent of model data and mobile drawers.
   const [selectedPlane, setSelectedPlane] = useState<PlaneKey>('side');
   const [modelInfo, setModelInfo] = useState<ModelInfo>({ dimensions: [253, 105.31, 79.4], triangles: 0, sample: true });
   const [lastInfo, setLastInfo] = useState<ModelInfo | null>(null);
@@ -177,6 +189,17 @@ export default function Home() {
   currentProject.current = project;
   const previousModel = useRef<{ model: LastProject['model']; settings: SceneSettings } | null>(null);
   const previousLast = useRef<LastLayer | null>(null);
+
+  // Changed: inspector shortcuts also reveal the panel that contains their result.
+  function openInspector(tab: InspectorTab) {
+    setInspector(tab);
+    setCollapsedPanels(previous => previous.settings ? { ...previous, settings: false } : previous);
+    if (window.matchMedia('(max-width: 980px)').matches) setMobilePanel('settings');
+  }
+
+  function togglePanel(panel: keyof typeof collapsedPanels) {
+    setCollapsedPanels(previous => ({ ...previous, [panel]: !previous[panel] }));
+  }
 
   const notify = useCallback((message: string, type: Notice['type'] = 'success') => setNotice({ message, type }), []);
   const reportError = useCallback((message: string) => {
@@ -511,14 +534,16 @@ export default function Home() {
         <button className="button button-primary" onClick={() => setModal('share')} disabled={!ready || !!busy}><Share2 size={16} /><span>공유</span></button>
       </nav>
     </header>
-    <div className="workspace-shell">
-      <aside className={`sources-panel ${mobilePanel === 'sources' ? 'mobile-open' : ''}`} aria-label="모델과 참조 이미지">
+    <div className={`workspace-shell ${collapsedPanels.sources ? 'sources-collapsed' : ''} ${collapsedPanels.settings ? 'inspector-collapsed' : ''}`}>
+      <aside id="workspace-panel" className={`sources-panel ${mobilePanel === 'sources' ? 'mobile-open' : ''}`} aria-label="모델과 참조 이미지">
         <div className="panel-top"><span className="eyebrow">WORKSPACE</span>
-          <button className="icon-button mobile-only" onClick={() => setMobilePanel(null)} aria-label="자료 패널 닫기"><X size={18} /></button>
-          <button className="icon-button desktop-only" onClick={() => setModal('reset')} aria-label="새 샘플 프로젝트"><Plus size={17} /></button>
+          <div className="panel-heading-actions"><button className="icon-button new-project-button" onClick={() => setModal('reset')} aria-label="새 샘플 프로젝트"><Plus size={17} /></button>
+            <PanelVisibilityButton side="left" expanded={!collapsedPanels.sources} controls="workspace-panel-content" className="desktop-only" onClick={() => togglePanel('sources')} />
+            <PanelVisibilityButton side="left" expanded={mobilePanel === 'sources'} controls="workspace-panel-content" className="mobile-only" onClick={() => setMobilePanel(null)} /></div>
         </div>
+        <div id="workspace-panel-content" className="panel-body">
         <div className="workspace-item"><span className="workspace-icon"><Layers size={18} /></span><div><strong>신발 디자인</strong><span>다측면 & 라스트</span></div><ChevronDown size={14} /></div>
-        <div className="section-label"><span>신발 모델</span><button className="text-button" onClick={() => { setActiveModel('shoe'); setInspector('transform'); }}>정렬</button></div>
+        <div className="section-label"><span>신발 모델</span><button className="text-button" onClick={() => { setActiveModel('shoe'); openInspector('transform'); }}>정렬</button></div>
         <div className="model-card">
           <div className="model-card-head"><span className="file-icon"><Box size={21} strokeWidth={1.4} /></span>
             <div><strong title={modelName}>{modelName}</strong><span>{project.model ? `${project.model.format.toUpperCase()} · 사용자 모델` : `${sampleDefinition.englishName} · 개념 모델`}</span></div>
@@ -530,7 +555,7 @@ export default function Home() {
           <div className="file-formats">STL · OBJ · GLB<span>최대 15 MB</span></div>
         </div>
         <button className="button sample-library-button" onClick={() => setModal('samples')}><Grid3X3 size={14} />신발 샘플 5종<ArrowUpRight size={14} /></button>
-        <div className="section-label"><span>라스트 모델</span>{project.last.enabled && <button className="text-button" onClick={() => { setActiveModel('last'); setInspector('transform'); }}>정렬</button>}</div>
+        <div className="section-label"><span>라스트 모델</span>{project.last.enabled && <button className="text-button" onClick={() => { setActiveModel('last'); openInspector('transform'); }}>정렬</button>}</div>
         <div className="model-card last-model-card">
           {project.last.enabled ? <>
             <div className="model-card-head"><span className="file-icon"><Box size={21} strokeWidth={1.4} /></span><div><strong title={lastName}>{lastName}</strong><span>{project.last.model ? `${project.last.model.format.toUpperCase()} · 사용자 라스트` : '비교용 예시 · 실측 신골 아님'}</span></div>
@@ -542,7 +567,7 @@ export default function Home() {
         </div>
         <div className="section-label"><span>참조 이미지</span><span className="count-badge">{String(importedCount).padStart(2, '0')} / 04</span></div>
         <div className="plane-list">{PLANE_KEYS.map(key => <div key={key} className={`plane-row ${selectedPlane === key ? 'selected' : ''}`}>
-          <button className="plane-select" onClick={() => { setSelectedPlane(key); setInspector('view'); }} aria-pressed={selectedPlane === key}>
+          <button className="plane-select" onClick={() => { setSelectedPlane(key); openInspector('view'); }} aria-pressed={selectedPlane === key}>
             <span className="plane-thumb"><PlaneThumbnail plane={key} project={project} /></span>
             <span className="plane-text"><strong>{PLANE_LABELS[key].name}<small>{PLANE_LABELS[key].axis}</small></strong><span>{project.planes[key].image?.name ?? '샘플 윤곽'}</span></span>
           </button>
@@ -557,6 +582,7 @@ export default function Home() {
           <button onClick={() => setModal('help')}><CircleHelp size={16} />사용 가이드<ArrowUpRight size={14} /></button>
           <div className="coordinate-note"><span className="axis-dot axis-x" />X 길이<span className="axis-dot axis-y" />Y 폭<span className="axis-dot axis-z" />Z 높이</div>
         </div>
+        </div>
       </aside>
       <main className="main-workspace">
         <div className="workspace-heading"><div><div className="workspace-breadcrumb">프로젝트<span>/</span>형상 연구</div>
@@ -566,8 +592,8 @@ export default function Home() {
           <p>다측면 이미지와 입체 형상을 한 공간에서 검토하세요.</p></div>
           <div className="project-state"><span className="state-dot" />{project.model ? '사용자 모델' : `${sampleDefinition.name} 샘플`}<small>{project.model ? '실측 단위를 확인하세요' : '다섯 가지 신발 형태를 비교하세요'}</small></div>
         </div>
-        <div className="mobile-panel-buttons"><button className="button button-outline" onClick={() => setMobilePanel('sources')}><Layers size={16} />모델·이미지</button>
-          <button className="button button-outline" onClick={() => setMobilePanel('settings')}><SlidersHorizontal size={16} />보기·정렬</button></div>
+        <div className="mobile-panel-buttons"><button className="button button-outline" aria-label="Workspace 펼치기" aria-expanded={mobilePanel === 'sources'} aria-controls="workspace-panel" onClick={() => setMobilePanel('sources')}><PanelLeftOpen size={16} aria-hidden="true" />모델·이미지</button>
+          <button className="button button-outline" aria-label="Inspector 펼치기" aria-expanded={mobilePanel === 'settings'} aria-controls="inspector-panel" onClick={() => setMobilePanel('settings')}><PanelRightOpen size={16} aria-hidden="true" />보기·정렬</button></div>
         <ShoeSampleQuickbar selected={project.model ? null : sampleDefinition.id} disabled={!ready || !!busy} onSelect={chooseSample} onDetails={() => setModal('samples')} />
         {comparison && <div className="comparison-banner" role="status"><span className="comparison-dot" /><div><strong>{comparison.version.name}<span> ↔ 현재 설계</span></strong><p>{comparisonLoading ? '저장본 모델을 준비하고 있습니다…' : `변경된 설정 ${comparisonChanges.length}개 · 단면·PNG·STL은 현재 설계 기준`}</p></div><button className="text-button" onClick={() => setModal('versions')}>변경값 보기</button><button className="icon-button" aria-label="버전 비교 종료" onClick={() => setComparison(null)}><X size={16} /></button></div>}
         <div className="viewport-shell" ref={stageRef}
@@ -594,7 +620,7 @@ export default function Home() {
             {(!ready || busy) && <div className="loading-overlay"><Loader2 className="spin" size={24} /><span>{busy || '작업 공간을 준비하는 중'}</span></div>}
             {isDragging && <div className="drop-overlay"><Upload size={34} /><strong>여기에 파일을 놓으세요</strong><span>3D 모델 · 프로젝트 · {PLANE_LABELS[selectedPlane].name} 참조 이미지</span></div>}
             <div className="canvas-actionbar"><button className={referencesVisible ? 'active' : ''} onClick={toggleReferences} aria-pressed={referencesVisible} aria-label="참조 이미지"><Layers size={17} /><span>참조 이미지</span></button><span className="toolbar-separator" /><button className={measure ? 'active' : ''} onClick={() => setMeasure(v => !v)} aria-pressed={measure} aria-label="거리 측정"><Ruler size={17} /><span>거리 측정</span></button>
-              <span className="toolbar-separator" /><button className={settings.section.enabled ? 'active' : ''} aria-label="단면 검사" aria-pressed={settings.section.enabled} onClick={() => { updateSettings({ section: { ...settings.section, enabled: !settings.section.enabled } }); setInspector('section'); if (window.matchMedia('(max-width: 980px)').matches) setMobilePanel('settings'); }}><Slice size={17} /><span>단면 검사</span></button>
+              <span className="toolbar-separator" /><button className={settings.section.enabled ? 'active' : ''} aria-label="단면 검사" aria-pressed={settings.section.enabled} onClick={() => { updateSettings({ section: { ...settings.section, enabled: !settings.section.enabled } }); openInspector('section'); }}><Slice size={17} /><span>단면 검사</span></button>
               <span className="toolbar-separator" /><button aria-label="PNG 저장" onClick={() => setModal('capture')} disabled={!ready || !!busy || !captureAvailable}><Camera size={17} /><span>PNG 저장</span></button></div>
             {measure && <div className="measure-readout" role="status"><Ruler size={15} />{distance === null ? '신발 표면에서 두 점을 선택하세요' : <><strong>{distance.toFixed(2)}</strong> mm<span>다시 선택하면 새로 측정합니다</span></>}</div>}
           </div>
@@ -610,9 +636,12 @@ export default function Home() {
         <footer className="workspace-status"><span className={`save-status ${draftStatus}`}><span />{draftStatus === 'saved' ? '이 브라우저에 자동 저장됨' : draftStatus === 'saving' ? '작업 저장 중' : '자동 저장 불가 · 파일로 저장하세요'}</span>
           <span>마지막 변경은 공유본에 자동 반영되지 않습니다</span></footer>
       </main>
-      <aside className={`inspector-panel ${mobilePanel === 'settings' ? 'mobile-open' : ''}`} aria-label="보기 및 정렬 설정">
-        <div className="panel-top"><span className="eyebrow">INSPECTOR</span><SlidersHorizontal size={15} className="desktop-only" />
-          <button className="icon-button mobile-only" onClick={() => setMobilePanel(null)} aria-label="설정 패널 닫기"><X size={18} /></button></div>
+      <aside id="inspector-panel" className={`inspector-panel ${mobilePanel === 'settings' ? 'mobile-open' : ''}`} aria-label="보기 및 정렬 설정">
+        <div className="panel-top">
+          <PanelVisibilityButton side="right" expanded={!collapsedPanels.settings} controls="inspector-panel-content" className="desktop-only" onClick={() => togglePanel('settings')} />
+          <PanelVisibilityButton side="right" expanded={mobilePanel === 'settings'} controls="inspector-panel-content" className="mobile-only" onClick={() => setMobilePanel(null)} />
+          <span className="eyebrow">INSPECTOR</span></div>
+        <div id="inspector-panel-content" className="panel-body">
         <div className="inspector-tabs" role="group" aria-label="설정 종류"><button aria-label="보기 설정" className={inspector === 'view' ? 'active' : ''} onClick={() => setInspector('view')}>보기</button>
           <button aria-label="모델 정렬" className={inspector === 'transform' ? 'active' : ''} onClick={() => setInspector('transform')}>정렬</button>
           <button className={inspector === 'section' ? 'active' : ''} onClick={() => { setInspector('section'); updateSettings({ section: { ...settings.section, enabled: true } }); }}>단면</button>
@@ -687,6 +716,7 @@ export default function Home() {
           </section>}
         </>}
         <div className="inspector-note"><span className="note-symbol">i</span><p>이미지 윤곽과 라스트를 비교하는 도구입니다. 실제 설계에는 치수와 여유 공간을 함께 검토하세요.</p></div>
+        </div>
       </aside>
     </div>
     {mobilePanel && <button className="mobile-scrim" aria-label="패널 닫기" onClick={() => setMobilePanel(null)} />}

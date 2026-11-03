@@ -857,7 +857,7 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     invalidate();
   }
 
-  function resize(): void {
+  function resize(renderImmediately = false): void {
     const rect = host.getBoundingClientRect();
     width = Math.max(1, rect.width);
     height = Math.max(1, rect.height);
@@ -869,7 +869,9 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     orthographic.top = orthoSpan / 2;
     orthographic.bottom = -orthoSpan / 2;
     orthographic.updateProjectionMatrix();
-    invalidate();
+    // Changed: resizing clears the canvas; redraw before paint to avoid a blank frame.
+    if (renderImmediately) renderer.render(scene, camera);
+    else invalidate();
   }
 
   function applyCameraType(): void {
@@ -928,11 +930,8 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     resize();
   }
 
-  const observer = new ResizeObserver(() => {
-    const previousAspect = width / height;
-    resize();
-    if (project && Math.abs((width / height) / previousAspect - 1) > 0.22) fit();
-  });
+  // Changed: panel resizing preserves the user's orbit, pan and zoom; fit stays explicit.
+  const observer = new ResizeObserver(() => resize(true));
   observer.observe(host);
   resize();
 
