@@ -27,7 +27,7 @@ registerHooks({
   },
 });
 
-const { createDefaultProject, createDefaultLastLayer, MAX_ASSET_BYTES } = await import('../lib/project.ts');
+const { createDefaultProject, createDefaultLastLayer, createDefaultSampleShape, MAX_ASSET_BYTES } = await import('../lib/project.ts');
 const { SAMPLE_KINDS } = await import('../lib/shoe-sample-catalog.ts');
 const { validateProject, validateImageAsset, validateModelAsset, estimateProjectBytes } = await import('../lib/project-validation.ts');
 const png = 'data:image/png;base64,' + Buffer.from('\x89PNG\r\n\x1a\n', 'binary').toString('base64');
@@ -339,5 +339,72 @@ test('rejects incomplete sections and invalid enabled, axis, or percentage value
     const project = createDefaultProject();
     Object.assign(project.settings.section, update);
     assert.throws(() => validateProject(project), /단면/);
+  }
+});
+
+// Changed: stored sample adjustments must not mutate imported models, registered
+// reference frames, or section settings, including when the controls are dormant.
+test('creates independent default sample shapes matching the original sample', () => {
+  const expected = { length: 253, ballWidthDelta: 0, heelWidthDelta: 0, toeHeightDelta: 0, instepHeightDelta: 0 };
+  assert.deepEqual(createDefaultSampleShape(), expected);
+  assert.deepEqual(createDefaultProject().settings.sampleShape, expected);
+  const changed = createDefaultSampleShape();
+  changed.length = 280;
+  assert.deepEqual(createDefaultSampleShape(), expected);
+});
+
+test('migrates missing sample adjustments while preserving both models, references, and sections', () => {
+  const legacy = createDefaultProject();
+  delete legacy.settings.sampleShape;
+  legacy.model = obj;
+  legacy.last.enabled = true;
+  legacy.last.model = glbAsset();
+  legacy.last.position = [-3, 4, 8];
+  legacy.settings.modelPosition = [1, 2, 3];
+  legacy.settings.modelUnits = 'cm';
+  legacy.settings.referenceCenter = [12, -4, 63];
+  legacy.settings.dimensions = [280, 120, 98];
+  legacy.settings.section = { enabled: true, axis: 'y', percent: 43.5 };
+  legacy.planes.side.image = { name: '등록한 측면.png', dataUrl: png };
+  const clean = validateProject(JSON.parse(JSON.stringify(legacy)));
+  assert.deepEqual(clean, { ...legacy, settings: { ...legacy.settings, sampleShape: createDefaultSampleShape() } });
+});
+
+test('round-trips all sample adjustment limits and fractional values while an uploaded shoe is active', () => {
+  for (const sampleShape of [
+    { length: 180, ballWidthDelta: -16, heelWidthDelta: -12, toeHeightDelta: -8, instepHeightDelta: -8 },
+    { length: 330, ballWidthDelta: 24, heelWidthDelta: 18, toeHeightDelta: 20, instepHeightDelta: 20 },
+    { length: 266.5, ballWidthDelta: 3.25, heelWidthDelta: -1.5, toeHeightDelta: 2.75, instepHeightDelta: 6.5 },
+  ]) {
+    const project = createDefaultProject();
+    project.model = obj;
+    project.last.enabled = true;
+    project.last.model = glbAsset();
+    project.last.position = [-4, 7, 9];
+    project.settings.referenceCenter = [15, -7, 100];
+    project.settings.section = { enabled: true, axis: 'z', percent: 25 };
+    project.planes.top.image = { name: '윗면.png', dataUrl: png };
+    project.settings.sampleShape = sampleShape;
+    assert.deepEqual(validateProject(JSON.parse(JSON.stringify(project))), project);
+  }
+});
+
+test('rejects incomplete, non-finite, or out-of-range sample settings even with imported models', () => {
+  for (const sampleShape of [null, [], {}, { length: 253 }]) {
+    const project = createDefaultProject();
+    project.model = obj;
+    project.settings.sampleShape = sampleShape;
+    assert.throws(() => validateProject(project), /샘플/);
+  }
+  for (const [key, lower, upper] of [
+    ['length', 180, 330], ['ballWidthDelta', -16, 24], ['heelWidthDelta', -12, 18],
+    ['toeHeightDelta', -8, 20], ['instepHeightDelta', -8, 20],
+  ]) {
+    for (const value of [lower - 0.001, upper + 0.001, Number.NaN, Infinity, '0']) {
+      const project = createDefaultProject();
+      project.model = obj;
+      project.settings.sampleShape[key] = value;
+      assert.throws(() => validateProject(project), /샘플/);
+    }
   }
 });

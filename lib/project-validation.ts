@@ -1,12 +1,15 @@
 import {
   MAX_ASSET_BYTES,
   MAX_PROJECT_BYTES,
+  SAMPLE_SHAPE_LIMITS,
   createDefaultLastLayer,
+  createDefaultSampleShape,
   type ImageAsset,
   type LastLayer,
   type LastProject,
   type ModelAsset,
   type PlaneKey,
+  type SampleShape,
   type SceneSettings,
   type SectionSettings,
   type Vec3,
@@ -63,6 +66,18 @@ function choice<T extends string>(value: unknown, options: readonly T[], label: 
     throw new ProjectValidationError(`${label} 설정을 확인해 주세요.`);
   }
   return value as T;
+}
+
+// Changed: imported models preserve dormant sample settings, with the same limits.
+function validateSampleShape(input: unknown): SampleShape {
+  const shape = record(input, '샘플 형상');
+  return {
+    length: numeric(shape.length, '샘플 길이', ...SAMPLE_SHAPE_LIMITS.length),
+    ballWidthDelta: numeric(shape.ballWidthDelta, '샘플 볼 폭 조절', ...SAMPLE_SHAPE_LIMITS.ballWidthDelta),
+    heelWidthDelta: numeric(shape.heelWidthDelta, '샘플 뒤꿈치 폭 조절', ...SAMPLE_SHAPE_LIMITS.heelWidthDelta),
+    toeHeightDelta: numeric(shape.toeHeightDelta, '샘플 앞코 높이 조절', ...SAMPLE_SHAPE_LIMITS.toeHeightDelta),
+    instepHeightDelta: numeric(shape.instepHeightDelta, '샘플 발등 높이 조절', ...SAMPLE_SHAPE_LIMITS.instepHeightDelta),
+  };
 }
 
 // Changed: a present section configuration must be complete, even when hidden.
@@ -171,6 +186,7 @@ export function validateProject(input: unknown): LastProject {
   const settings: SceneSettings = {
     // Changed: older version-1 projects have no selection; preserve their other data.
     sampleKind: raw.sampleKind === undefined ? DEFAULT_SAMPLE_KIND : choice(raw.sampleKind, SAMPLE_KINDS, '신발 샘플'),
+    sampleShape: raw.sampleShape === undefined ? createDefaultSampleShape() : validateSampleShape(raw.sampleShape), // Changed
     dimensions: vector(raw.dimensions, '기준 치수', 1, 10000),
     // Changed: missing or null retains legacy center [0, 0, height / 2].
     referenceCenter: raw.referenceCenter === undefined || raw.referenceCenter === null

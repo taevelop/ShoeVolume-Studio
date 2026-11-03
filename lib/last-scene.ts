@@ -3,10 +3,10 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { PLANE_LABELS, type LastProject, type ModelAsset, type ModelInfo, type PlaneKey, type Vec3 } from './project';
+import { PLANE_LABELS, createDefaultSampleShape, type LastProject, type ModelAsset, type ModelInfo, type PlaneKey, type SampleShape, type Vec3 } from './project';
 import { createSampleLastGeometry, createSampleReference, disposeMaterial, disposeObject, textSprite } from './scene-geometry';
 import { SoftwareRenderer } from './scene-software-renderer';
-import { createShoeSample } from './shoe-samples';
+import { createShapedShoeSample } from './sample-shape';
 import { DEFAULT_SAMPLE_KIND, type ShoeSampleKind } from './shoe-sample-catalog';
 // Changed: reference export uses an isolated renderer without changing this scene.
 import { captureModelReferences } from './reference-capture';
@@ -37,6 +37,8 @@ export interface LastSceneController {
   fit: () => void;
   screenshot: () => void;
   captureReferences: ReferenceCaptureFunction;
+  // Changed: only built-in edited samples can be exported as world-mm STL.
+  exportStl: () => Promise<Blob>;
   dispose: () => void;
 }
 
@@ -99,9 +101,9 @@ function modelMaterial(): THREE.MeshPhysicalMaterial {
   });
 }
 
-export async function parseLastModel(asset: ModelAsset | null, sampleKind: ShoeSampleKind = DEFAULT_SAMPLE_KIND): Promise<THREE.Group> {
+export async function parseLastModel(asset: ModelAsset | null, sampleKind: ShoeSampleKind = DEFAULT_SAMPLE_KIND, sampleShape: SampleShape = createDefaultSampleShape()): Promise<THREE.Group> {
   // Changed: built-in shoes retain their authored upper, sole, and detail colors.
-  if (!asset) return createShoeSample(sampleKind);
+  if (!asset) return createShapedShoeSample(sampleKind, sampleShape);
   const root = new THREE.Group();
   const buffer = decodeDataUrl(asset.dataUrl);
   if (asset.format === 'stl') {
@@ -496,14 +498,14 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     invalidate();
   }
 
-  async function updateModel(asset: ModelAsset | null, sampleKind: ShoeSampleKind): Promise<void> {
+  async function updateModel(asset: ModelAsset | null, sampleKind: ShoeSampleKind, sampleShape: SampleShape): Promise<void> {
     const revision = ++modelRevision;
     modelLoading = true;
     modelLoadError = null;
     clearSection();
     callbacks.onLoading(true);
     try {
-      const next = await parseLastModel(asset, sampleKind);
+      const next = await parseLastModel(asset, sampleKind, sampleShape);
       if (disposed || revision !== modelRevision) { disposeObject(next); return; }
       if (model) disposeObject(model);
       model = next;
@@ -827,7 +829,10 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     // A new asset object is also a new import request when its bytes are equal.
     // Re-parse it so successful re-imports reliably clear the UI rollback state.
     // Changed: choosing another built-in shoe is also a new geometry request.
-    const sampleChange = next.model === null && s.sampleKind !== previous?.sampleKind;
+    // Changed: sample edits replace the built-in geometry, invalidating model
+    // information, captures and sections while preserving the Last and references.
+    const shapeChange = !previous || (Object.keys(s.sampleShape) as (keyof SampleShape)[]).some((key) => s.sampleShape[key] !== previous.sampleShape[key]);
+    const sampleChange = next.model === null && (s.sampleKind !== previous?.sampleKind || shapeChange);
     const assetChange = modelSource === undefined || next.model !== modelSource || sampleChange;
     const transformChange = !previous || s.modelScale !== previous.modelScale || s.modelUp !== previous.modelUp || s.modelUnits !== previous.modelUnits || s.modelRotation.some((n, i) => n !== previous.modelRotation[i]) || s.modelPosition.some((n, i) => n !== previous.modelPosition[i]);
     const lastSourceChange = next.last.enabled && (lastLayerSource === undefined || next.last.model !== lastLayerSource);
@@ -838,7 +843,7 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     if (sectionInputsChanged) clearSection();
     if (assetChange) {
       modelSource = next.model;
-      void updateModel(next.model, s.sampleKind);
+      void updateModel(next.model, s.sampleKind, s.sampleShape);
     } else {
       if (transformChange) {
         // Changed: a capture of an older pose cannot be delivered as the new pose.
@@ -909,6 +914,28 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     return pending;
   };
 
+  // Changed: export the actual current sample mesh and alignment, never static
+  // downloadable source assets or the independent Last/reference/guide layers.
+  async function exportStl(): Promise<Blob> {
+    const revision = modelRevision;
+    const poseRevision = modelPoseRevision;
+    const assertCurrent = () => {
+      if (disposed) throw new Error('3D 화면이 닫혔습니다. 다시 열어 저장해 주세요.');
+      if (modelLoading || !model || modelLoadedRevision !== modelRevision || modelLoadError) throw new Error('샘플 형상을 준비하는 중입니다. 완료된 뒤 다시 저장해 주세요.');
+      if (!currentSample || project?.model !== null) throw new Error('현재 형상 STL 저장은 기본 신발 샘플에서 사용할 수 있습니다.');
+      if (revision !== modelRevision || poseRevision !== modelPoseRevision) throw new Error('형상이 바뀌었습니다. 현재 샘플로 다시 저장해 주세요.');
+    };
+    assertCurrent();
+    const { STLExporter } = await import('three/addons/exporters/STLExporter.js');
+    assertCurrent();
+    pose.updateMatrixWorld(true);
+    const data = new STLExporter().parse(pose, { binary: true });
+    assertCurrent();
+    const bytes = new Uint8Array(data.byteLength);
+    bytes.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+    return new Blob([bytes], { type: 'model/stl' });
+  }
+
   function dispose(): void {
     disposed = true;
     modelRevision++;
@@ -930,5 +957,5 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     references.clear();
   }
 
-  return { setProject, setMeasure, fit, screenshot, captureReferences, dispose };
+  return { setProject, setMeasure, fit, screenshot, captureReferences, exportStl, dispose };
 }

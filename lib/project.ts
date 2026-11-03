@@ -8,6 +8,24 @@ export type PlaneKey = 'side' | 'top' | 'front' | 'rear';
 export type ViewKey = 'iso' | 'side' | 'top' | 'front' | 'rear';
 export type Vec3 = [number, number, number];
 
+// Changed: nominal sample adjustments are independent of imported model poses.
+export interface SampleShape {
+  length: number;
+  ballWidthDelta: number;
+  heelWidthDelta: number;
+  toeHeightDelta: number;
+  instepHeightDelta: number;
+}
+
+// Changed: controls and project validation share the same nominal mm limits.
+export const SAMPLE_SHAPE_LIMITS = {
+  length: [180, 330],
+  ballWidthDelta: [-16, 24],
+  heelWidthDelta: [-12, 18],
+  toeHeightDelta: [-8, 20],
+  instepHeightDelta: [-8, 20],
+} as const satisfies Record<keyof SampleShape, readonly [number, number]>;
+
 // Changed: section selection is saved independently of both model transforms.
 export type SectionAxis = 'x' | 'y' | 'z';
 export interface SectionSettings {
@@ -49,6 +67,7 @@ export interface LastLayer {
 
 export interface SceneSettings {
   sampleKind: SampleKind; // Changed: stored selection; uploaded model retains priority.
+  sampleShape: SampleShape; // Changed
   dimensions: Vec3;
   referenceCenter: Vec3 | null; // Changed: null keeps the original ground-based frame.
   section: SectionSettings; // Changed
@@ -93,6 +112,11 @@ export const PLANE_LABELS: Record<PlaneKey, { name: string; axis: string; short:
   rear: { name: '후면', axis: 'YZ', short: 'REAR' },
 };
 
+// Changed: new projects and earlier version-1 files retain the original sample.
+export function createDefaultSampleShape(): SampleShape {
+  return { length: 253, ballWidthDelta: 0, heelWidthDelta: 0, toeHeightDelta: 0, instepHeightDelta: 0 };
+}
+
 // Changed: fresh values also provide a lossless default for older version-1 files.
 export function createDefaultLastLayer(): LastLayer {
   return {
@@ -106,6 +130,7 @@ export function createDefaultProject(): LastProject {
     schema: 'last-studio', version: 1, title: 'SHOOB F240 형상 검토',
     settings: {
       sampleKind: DEFAULT_SAMPLE_KIND, // Changed
+      sampleShape: createDefaultSampleShape(), // Changed
       dimensions: [253, 105.31, 79.4], referenceCenter: null, gap: 28, imageOpacity: 0.58,
       section: { enabled: false, axis: 'x', percent: 66.7 }, // Changed
       lastOpacity: 1, grid: true, axes: true, bounds: false,

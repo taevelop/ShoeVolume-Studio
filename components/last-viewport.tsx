@@ -22,20 +22,22 @@ export interface LastViewportProps {
   onRenderMode?: (mode: 'webgl' | 'software') => void;
   // Changed: parents can request reference PNGs once the scene is available.
   onCaptureReady?: (capture: ReferenceCaptureFunction | null) => void;
+  // Changed: readiness follows the current built-in geometry, including edits.
+  onStlReady?: (exporter: (() => Promise<Blob>) | null) => void;
   resetToken: number;
   screenshotToken: number;
 }
 
-export default function LastViewport({ project, onModelInfo, onError, measure, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onSection, onRenderMode, onCaptureReady, resetToken, screenshotToken }: LastViewportProps) {
+export default function LastViewport({ project, onModelInfo, onError, measure, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onSection, onRenderMode, onCaptureReady, onStlReady, resetToken, screenshotToken }: LastViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<LastSceneController | null>(null);
-  const callbacksRef = useRef({ onModelInfo, onError, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onSection, onRenderMode, onCaptureReady });
+  const callbacksRef = useRef({ onModelInfo, onError, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onSection, onRenderMode, onCaptureReady, onStlReady });
   const projectRef = useRef(project);
   const measureRef = useRef(measure);
   const [loading, setLoading] = useState(true);
   const [fatalError, setFatalError] = useState<string | null>(null);
   const [renderNotice, setRenderNotice] = useState<string | null>(null);
-  callbacksRef.current = { onModelInfo, onError, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onSection, onRenderMode, onCaptureReady };
+  callbacksRef.current = { onModelInfo, onError, onMeasure, onModelLoaded, onLastInfo, onLastError, onLastLoaded, onSection, onRenderMode, onCaptureReady, onStlReady };
   projectRef.current = project;
   measureRef.current = measure;
 
@@ -61,6 +63,7 @@ export default function LastViewport({ project, onModelInfo, onError, measure, o
         onLoading: (pending) => {
           setLoading(pending);
           callbacksRef.current.onCaptureReady?.(pending ? null : controllerRef.current?.captureReferences ?? null);
+          callbacksRef.current.onStlReady?.(pending || projectRef.current.model !== null ? null : controllerRef.current?.exportStl ?? null);
         },
       });
       controllerRef.current = controller;
@@ -77,6 +80,7 @@ export default function LastViewport({ project, onModelInfo, onError, measure, o
       cancelled = true;
       // Changed: invalidate parent references before the controller is disposed.
       callbacksRef.current.onCaptureReady?.(null);
+      callbacksRef.current.onStlReady?.(null);
       controllerRef.current?.dispose();
       controllerRef.current = null;
     };

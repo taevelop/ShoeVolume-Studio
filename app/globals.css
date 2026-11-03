@@ -381,10 +381,14 @@ img { max-width: 100%; }
 .viewport-shell:fullscreen .viewport-canvas-area { flex: 1; height: auto; min-height: 0; }
 
 /* Inspector controls keep dimensions visible and editable without a form wall. */
-.inspector-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; margin: 17px 0 4px; padding: 3px; border-radius: 6px; background: #edf1e7; }
+.inspector-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; margin: 17px 0 4px; padding: 3px; border-radius: 6px; background: #edf1e7; }
 .inspector-tabs button { height: 32px; padding: 4px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #69765f; font-size: 12px; }
 .inspector-tabs button.active { border-color: #e3e9da; background: #fff; color: #566e46; font-weight: 600; box-shadow: 0 1px 3px #4c60300a; }
 .inspector-tabs button:hover:not(.active) { color: #5a7449; background: #e5eddb; }
+.shape-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px 10px; margin: 18px 0; }
+.shape-fields > label:first-child { grid-column: 1 / -1; }
+.shape-fields .number-field > span { font-size: 11px; }
+.shape-field-note { margin: 14px 0; color: #7e8974; font-size: 11px; line-height: 1.8; }
 .inspector-section { padding: 21px 0 19px; border-bottom: 1px solid #e3e9db; }
 .inspector-section h2 { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 16px; color: #637554; font-size: 12px; font-weight: 650; }
 .subtle-icon { display: inline-flex; color: #69765f; }

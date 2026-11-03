@@ -16,11 +16,11 @@ import SectionPanel from '@/components/section-panel'; // Changed
 import type { SectionResult } from '@/lib/section-analysis';
 import type { ReferenceCaptureFunction, ReferenceCaptureImage } from '@/lib/reference-capture-types'; // Changed
 import {
-  createDefaultProject, createDefaultLastLayer, MAX_PROJECT_BYTES, PLANE_LABELS, type LastProject, type LastLayer, type ModelInfo,
+  createDefaultProject, createDefaultLastLayer, createDefaultSampleShape, SAMPLE_SHAPE_LIMITS, MAX_PROJECT_BYTES, PLANE_LABELS, type LastProject, type LastLayer, type ModelInfo, type SampleShape,
   type PlaneKey, type SceneSettings, type Vec3, type ViewKey,
 } from '@/lib/project';
 import {
-  downloadProject, loadProjectSnapshot, readImageFile, readModelFile,
+  downloadBlob, downloadProject, loadProjectSnapshot, readImageFile, readModelFile,
   readProjectFile, saveProjectSnapshot,
 } from '@/lib/project-io';
 import { loadDraft, saveDraft } from '@/lib/local-store';
@@ -35,6 +35,13 @@ const VIEWS: { key: ViewKey; label: string; axis: string }[] = [
   { key: 'iso', label: '입체', axis: '3D' }, { key: 'side', label: '측면', axis: 'XZ' },
   { key: 'top', label: '윗면', axis: 'XY' }, { key: 'front', label: '정면', axis: 'YZ' },
   { key: 'rear', label: '후면', axis: 'YZ' },
+];
+const SHAPE_FIELDS: { key: keyof SampleShape; label: string }[] = [
+  { key: 'length', label: '신발 길이' },
+  { key: 'ballWidthDelta', label: '발볼 폭 변화' },
+  { key: 'heelWidthDelta', label: '뒤꿈치 폭 변화' },
+  { key: 'toeHeightDelta', label: '앞코 높이 변화' },
+  { key: 'instepHeightDelta', label: '발등 높이 변화' },
 ];
 type ModalKind = 'share' | 'help' | 'references' | 'dimensions' | 'samples' | 'capture' | 'reset' | null; // Changed
 type Notice = { message: string; type: 'success' | 'error' };
@@ -130,7 +137,7 @@ export default function Home() {
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState<Notice | null>(null);
   const [modal, setModal] = useState<ModalKind>(null);
-  const [inspector, setInspector] = useState<'view' | 'transform' | 'section'>('view');
+  const [inspector, setInspector] = useState<'view' | 'transform' | 'section' | 'shape'>('view');
   const [sectionResult, setSectionResult] = useState<SectionResult | null>(null);
   const [activeModel, setActiveModel] = useState<'shoe' | 'last'>('shoe'); // Changed: independent model controls.
   const [mobilePanel, setMobilePanel] = useState<'sources' | 'settings' | null>(null);
@@ -143,6 +150,8 @@ export default function Home() {
   const [resetToken, setResetToken] = useState(0);
   const [screenshotToken, setScreenshotToken] = useState(0);
   const [captureAvailable, setCaptureAvailable] = useState(false); // Changed
+  const [stlAvailable, setStlAvailable] = useState(false);
+  const [stlPending, setStlPending] = useState(false);
   const [draftStatus, setDraftStatus] = useState<'saving' | 'saved' | 'unavailable'>('saving');
   const [shareUrl, setShareUrl] = useState('');
   const [sharing, setSharing] = useState(false);
@@ -154,6 +163,7 @@ export default function Home() {
   const imageInput = useRef<HTMLInputElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const captureRef = useRef<ReferenceCaptureFunction | null>(null); // Changed
+  const stlRef = useRef<(() => Promise<Blob>) | null>(null);
   const uploadPlane = useRef<PlaneKey>('side');
   const dragCount = useRef(0);
   const mounted = useRef(true);
@@ -187,6 +197,9 @@ export default function Home() {
   const captureReferences = useCallback<ReferenceCaptureFunction>(async options => {
     if (!captureRef.current) throw new Error('3D 모델을 준비하는 중입니다. 잠시 후 다시 캡처해 주세요.');
     return captureRef.current(options);
+  }, []);
+  const stlReady = useCallback((exporter: (() => Promise<Blob>) | null) => {
+    stlRef.current = exporter; setStlAvailable(exporter !== null);
   }, []);
 
   useEffect(() => {
@@ -344,6 +357,18 @@ export default function Home() {
     checkProjectCapacity(next);
     setProject(next); setModal(null); setInspector('view'); setResetToken(n => n + 1);
     notify('4면 참조 이미지의 크기와 중심 위치를 캡처에 맞춰 적용했습니다.');
+  }
+
+  async function exportCurrentShoe() {
+    if (!stlRef.current || stlPending) return;
+    setStlPending(true);
+    try {
+      const blob = await stlRef.current();
+      if (!mounted.current) return;
+      downloadBlob(blob, `${sampleDefinition.id}-current.stl`);
+      notify('편집과 정렬을 반영한 현재 신발 STL 저장을 요청했습니다.');
+    } catch (error) { if (mounted.current) notify(error instanceof Error ? error.message : '현재 신발을 내보내지 못했습니다.', 'error'); }
+    finally { if (mounted.current) setStlPending(false); }
   }
 
   function selectImage(key: PlaneKey) { uploadPlane.current = key; imageInput.current?.click(); }
@@ -530,7 +555,7 @@ export default function Home() {
           <div className="viewport-canvas-area">
             {ready && <LastViewport project={project} onModelInfo={modelChanged} onError={reportError}
               measure={measure} onMeasure={measurementChanged} resetToken={resetToken} screenshotToken={screenshotToken} onModelLoaded={modelLoaded} onRenderMode={setRenderMode} onCaptureReady={captureReady}
-              onLastInfo={setLastInfo} onLastError={reportLastError} onLastLoaded={lastLoaded} onSection={setSectionResult} />}
+              onLastInfo={setLastInfo} onLastError={reportLastError} onLastLoaded={lastLoaded} onSection={setSectionResult} onStlReady={stlReady} />}
             <div className="viewport-top-label"><span className="view-dot" /><span>{VIEWS.find(v => v.key === settings.view)?.axis}</span><span className="label-divider" />{settings.orthographic || settings.view !== 'iso' ? '정사영' : '원근 뷰'}{renderMode === 'software' && <span title="이 브라우저에서는 3D 형상을 호환 모드로 표시합니다"> · 호환 렌더링</span>}</div>
             {!project.model && <div className="sample-label">{sampleDefinition.englishName.toUpperCase()}<span>신발 개념 샘플 · 제조 검증 전</span></div>}
             {project.last.enabled && <div className="model-comparison-legend"><span className="shoe-legend-dot" />신발<span className="last-legend-dot" />{lastName}</div>}
@@ -556,9 +581,10 @@ export default function Home() {
       <aside className={`inspector-panel ${mobilePanel === 'settings' ? 'mobile-open' : ''}`} aria-label="보기 및 정렬 설정">
         <div className="panel-top"><span className="eyebrow">INSPECTOR</span><SlidersHorizontal size={15} className="desktop-only" />
           <button className="icon-button mobile-only" onClick={() => setMobilePanel(null)} aria-label="설정 패널 닫기"><X size={18} /></button></div>
-        <div className="inspector-tabs" role="group" aria-label="설정 종류"><button className={inspector === 'view' ? 'active' : ''} onClick={() => setInspector('view')}>보기 설정</button>
-          <button className={inspector === 'transform' ? 'active' : ''} onClick={() => setInspector('transform')}>모델 정렬</button>
-          <button className={inspector === 'section' ? 'active' : ''} onClick={() => { setInspector('section'); updateSettings({ section: { ...settings.section, enabled: true } }); }}>단면</button></div>
+        <div className="inspector-tabs" role="group" aria-label="설정 종류"><button aria-label="보기 설정" className={inspector === 'view' ? 'active' : ''} onClick={() => setInspector('view')}>보기</button>
+          <button aria-label="모델 정렬" className={inspector === 'transform' ? 'active' : ''} onClick={() => setInspector('transform')}>정렬</button>
+          <button className={inspector === 'section' ? 'active' : ''} onClick={() => { setInspector('section'); updateSettings({ section: { ...settings.section, enabled: true } }); }}>단면</button>
+          <button aria-label="치수 편집" className={inspector === 'shape' ? 'active' : ''} onClick={() => setInspector('shape')}>치수</button></div>
         {inspector === 'view' ? <>
           <section className="inspector-section"><h2>평면 배치<span className="subtle-icon"><Layers size={15} /></span></h2>
             <RangeField label="면 간격" value={settings.gap} max={120} unit="mm" onChange={gap => updateSettings({ gap })} />
@@ -613,7 +639,21 @@ export default function Home() {
             {!!targetInfo?.triangles && <p className="section-description">{targetInfo.triangles.toLocaleString('ko-KR')} triangles</p>}
             <button className="button button-outline reset-transform" onClick={() => updateTarget({ position: [0, 0, 0], rotation: [0, 0, 0], scale: 1 })}><RotateCcw size={14} />정렬값 초기화</button>
           </section>
-        </> : <SectionPanel settings={settings.section} result={sectionResult} hasLast={project.last.enabled} onChange={patch => updateSettings({ section: { ...settings.section, ...patch } })} />}
+        </> : inspector === 'section' ? <SectionPanel settings={settings.section} result={sectionResult} hasLast={project.last.enabled} onChange={patch => updateSettings({ section: { ...settings.section, ...patch } })} /> : <>
+          <section className="inspector-section"><h2>신발 샘플 치수<span className="unit-label">mm</span></h2>
+            {project.model ? <><p className="section-description">부위별 편집은 내장 신발 5종에서 사용할 수 있습니다. 가져온 파일은 ‘정렬’에서 이동·회전·균일 배율을 조절하세요.</p><button className="button button-outline full-width" onClick={() => setModal('samples')}>신발 샘플 고르기</button></> : <>
+              <p className="section-description">{sampleDefinition.name}의 길이와 부위별 변화를 조절합니다. 샘플 종류를 바꿔도 조절값은 유지됩니다.</p>
+              <div className="shape-fields">{SHAPE_FIELDS.map(field => <NumberField key={field.key} label={field.label} suffix="mm" value={settings.sampleShape[field.key]} min={SAMPLE_SHAPE_LIMITS[field.key][0]} max={SAMPLE_SHAPE_LIMITS[field.key][1]} step={1} onChange={value => updateSettings({ sampleShape: { ...settings.sampleShape, [field.key]: value } })} />)}</div>
+              <p className="shape-field-note">길이는 목표값, 폭·높이는 기본 샘플 대비 부위별 최대 변화량입니다. +는 확대, −는 축소이며 주변으로 부드럽게 이어집니다. ‘정렬’의 배율은 추가 적용됩니다. 최종 단면 치수는 단면 검사에서 확인하세요.</p>
+              <button className="button button-outline reset-transform" onClick={() => updateSettings({ sampleShape: createDefaultSampleShape() })}><RotateCcw size={14} />기본 치수로 초기화</button>
+            </>}
+          </section>
+          {!project.model && <section className="inspector-section"><h2>편집된 모델 외곽 크기</h2><div className="size-readout">{['길이 X', '폭 Y', '높이 Z'].map((label, i) => <div key={label}><span>{label}</span><strong>{modelInfo.dimensions[i].toFixed(2)}<small>mm</small></strong></div>)}</div>
+            <p className="section-description">현재 정렬·배율을 포함한 월드 축 기준 크기입니다. 라스트와 참조 이미지는 독립적으로 유지됩니다.</p>
+            <button className="button button-primary full-width" disabled={!stlAvailable || stlPending} onClick={() => void exportCurrentShoe()}>{stlPending ? <Loader2 className="spin" size={14} /> : <Download size={14} />}현재 신발 STL 저장</button>
+            <p className="section-description">mm 단위 · 현재 정렬 포함 · 색상 제외. 컬렉션의 다운로드는 편집 전 기본 샘플입니다.</p>
+          </section>}
+        </>}
         <div className="inspector-note"><span className="note-symbol">i</span><p>이미지 윤곽과 라스트를 비교하는 도구입니다. 실제 설계에는 치수와 여유 공간을 함께 검토하세요.</p></div>
       </aside>
     </div>
