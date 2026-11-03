@@ -96,46 +96,12 @@ export function createSampleLastGeometry(dimensions: Vec3 = [253, 105.31, 79.4])
   return geometry;
 }
 
-type Point2 = [number, number];
-
-function convexHull(points: Point2[]): Point2[] {
-  const sorted = points.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  const cross = (o: Point2, a: Point2, b: Point2) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
-  const lower: Point2[] = [];
-  for (const p of sorted) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
-    lower.push(p);
-  }
-  const upper: Point2[] = [];
-  for (let i = sorted.length - 1; i >= 0; i--) {
-    const p = sorted[i];
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
-    upper.push(p);
-  }
-  return lower.slice(0, -1).concat(upper.slice(0, -1));
-}
-
-/** Blueprint guides are projections of the sample, not manufactured-shoe images. */
+/** Empty image slots show a neutral registration grid, never a guessed shoe outline. */
 export function createSampleReference(key: PlaneKey, dimensions: Vec3): string {
   const [length, width, height] = dimensions;
   const horizontal = key === 'side' || key === 'top' ? length : width;
   const vertical = key === 'top' ? width : height;
-  const geometry = createSampleLastGeometry([260, 100, 110]);
-  const vertices = geometry.getAttribute('position');
-  const points: Point2[] = [];
-  for (let i = 0; i < vertices.count; i++) {
-    const x = vertices.getX(i) * length / 260;
-    const y = vertices.getY(i) * width / 100;
-    const z = vertices.getZ(i) * height / 110;
-    if (key === 'side') points.push([x + length / 2, height - z]);
-    else if (key === 'top') points.push([x + length / 2, width / 2 - y]);
-    else points.push([width / 2 + y * (key === 'rear' ? -1 : 1), height - z]);
-  }
-  geometry.dispose();
-  const hull = convexHull(points);
-  const path = hull.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ') + ' Z';
-  const stroke = Math.max(0.4, horizontal / 500);
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${horizontal * 4}" height="${vertical * 4}" viewBox="0 0 ${horizontal} ${vertical}"><defs><pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="#ccd2c7" stroke-width="0.3"/></pattern><pattern id="hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(35)"><path d="M 0 0 L 0 5" stroke="#7b8c75" stroke-width="0.35"/></pattern></defs><rect width="100%" height="100%" fill="#f8faf5" fill-opacity="0.42"/><rect width="100%" height="100%" fill="url(#grid)"/><path d="${path}" fill="#a6b29a" fill-opacity="0.12" stroke="#6a7d65" stroke-width="${stroke}"/><path d="${path}" fill="url(#hatch)" opacity="0.4"/><path d="M${horizontal / 2},0 V${vertical} M0,${vertical / 2} H${horizontal}" fill="none" stroke="#98a88e" stroke-width="0.3" stroke-dasharray="3 2"/></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${horizontal * 4}" height="${vertical * 4}" viewBox="0 0 ${horizontal} ${vertical}"><defs><pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="#ccd2c7" stroke-width="0.3"/></pattern></defs><rect width="100%" height="100%" fill="#f8faf5" fill-opacity="0.22"/><rect width="100%" height="100%" fill="url(#grid)"/><path d="M${horizontal / 2},0 V${vertical} M0,${vertical / 2} H${horizontal}" fill="none" stroke="#98a88e" stroke-width="0.3" stroke-dasharray="3 2"/></svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 

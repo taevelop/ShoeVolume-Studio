@@ -4,8 +4,10 @@ import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { PLANE_LABELS, type LastProject, type ModelAsset, type ModelInfo, type PlaneKey, type Vec3 } from './project';
-import { createSampleLastGeometry, createSampleReference, disposeMaterial, disposeObject, textSprite } from './scene-geometry';
+import { createSampleReference, disposeMaterial, disposeObject, textSprite } from './scene-geometry';
 import { SoftwareRenderer } from './scene-software-renderer';
+import { createShoeSample } from './shoe-samples';
+import { DEFAULT_SAMPLE_KIND, type ShoeSampleKind } from './shoe-sample-catalog';
 
 interface SceneCallbacks {
   onModelInfo: (info: ModelInfo) => void;
@@ -33,6 +35,12 @@ interface ReferencePlane {
   edge: THREE.LineSegments<THREE.EdgesGeometry, THREE.LineBasicMaterial>;
   key: PlaneKey;
   revision: number;
+}
+
+interface MaterialAppearance {
+  opacity: number;
+  transparent: boolean;
+  depthWrite: boolean;
 }
 
 function decodeDataUrl(value: string): ArrayBuffer {
@@ -78,12 +86,10 @@ function modelMaterial(): THREE.MeshPhysicalMaterial {
   });
 }
 
-export async function parseLastModel(asset: ModelAsset | null): Promise<THREE.Group> {
+export async function parseLastModel(asset: ModelAsset | null, sampleKind: ShoeSampleKind = DEFAULT_SAMPLE_KIND): Promise<THREE.Group> {
+  // Changed: built-in shoes retain their authored upper, sole, and detail colors.
+  if (!asset) return createShoeSample(sampleKind);
   const root = new THREE.Group();
-  if (!asset) {
-    root.add(new THREE.Mesh(createSampleLastGeometry(), modelMaterial()));
-    return root;
-  }
   const buffer = decodeDataUrl(asset.dataUrl);
   if (asset.format === 'stl') {
     const geometry = new STLLoader().parse(buffer);
@@ -158,7 +164,7 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   }
   renderer.domElement.style.cssText = 'display:block;width:100%;height:100%;touch-action:none;outline:none;';
-  renderer.domElement.setAttribute('aria-label', '3D 신골과 다측면 이미지. 마우스로 회전하고 휠로 확대합니다.');
+  renderer.domElement.setAttribute('aria-label', '3D 신발 모델과 다측면 이미지. 마우스로 회전하고 휠로 확대합니다.');
   renderer.domElement.setAttribute('role', 'img');
   host.appendChild(renderer.domElement);
 
@@ -198,6 +204,7 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
   let orthoSpan = 360;
   let triangles = 0;
   let lastModelInfo = '';
+  const materialAppearance = new WeakMap<THREE.Material, MaterialAppearance>();
 
   const hemisphere = new THREE.HemisphereLight('#ffffff', '#afb9a3', 2.3);
   hemisphere.position.set(0, 0, 500);
@@ -344,13 +351,22 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
       if (child instanceof THREE.Mesh) {
         const materials = Array.isArray(child.material) ? child.material : [child.material];
         for (const material of materials) {
-          if (material instanceof THREE.MeshPhysicalMaterial) {
-            material.opacity = s.lastOpacity;
-            material.transparent = s.lastOpacity < 0.999;
-            material.depthWrite = s.lastOpacity >= 0.999;
-            material.wireframe = s.wireframe;
-            material.needsUpdate = true;
+          // Changed: support every shoe material while preserving its base opacity.
+          let original = materialAppearance.get(material);
+          if (!original) {
+            original = { opacity: material.opacity, transparent: material.transparent, depthWrite: material.depthWrite };
+            materialAppearance.set(material, original);
           }
+          const opacity = original.opacity * s.lastOpacity;
+          const transparent = original.transparent || opacity < 0.999;
+          const surface = material as THREE.Material & { wireframe?: boolean };
+          const hasWireframe = typeof surface.wireframe === 'boolean';
+          const needsUpdate = material.transparent !== transparent || (hasWireframe && surface.wireframe !== s.wireframe);
+          material.opacity = opacity;
+          material.transparent = transparent;
+          material.depthWrite = original.depthWrite && opacity >= 0.999;
+          if (hasWireframe) surface.wireframe = s.wireframe;
+          if (needsUpdate) material.needsUpdate = true;
         }
         child.castShadow = s.lastOpacity > 0.25 && !s.wireframe;
         child.receiveShadow = true;
@@ -360,15 +376,16 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     invalidate();
   }
 
-  async function updateModel(asset: ModelAsset | null): Promise<void> {
+  async function updateModel(asset: ModelAsset | null, sampleKind: ShoeSampleKind): Promise<void> {
     const revision = ++modelRevision;
     callbacks.onLoading(true);
     try {
-      const next = await parseLastModel(asset);
+      const next = await parseLastModel(asset, sampleKind);
       if (disposed || revision !== modelRevision) { disposeObject(next); return; }
       if (model) disposeObject(model);
       model = next;
       currentSample = asset === null;
+      lastModelInfo = '';
       sourceAxis.add(model);
       triangles = 0;
       model.traverse((child) => {
@@ -600,10 +617,12 @@ export function createLastScene(host: HTMLDivElement, callbacks: SceneCallbacks)
     updateReferences(dimensionChange);
     // A new asset object is also a new import request when its bytes are equal.
     // Re-parse it so successful re-imports reliably clear the UI rollback state.
-    const assetChange = modelSource === undefined || next.model !== modelSource;
+    // Changed: choosing another built-in shoe is also a new geometry request.
+    const sampleChange = next.model === null && s.sampleKind !== previous?.sampleKind;
+    const assetChange = modelSource === undefined || next.model !== modelSource || sampleChange;
     if (assetChange) {
       modelSource = next.model;
-      void updateModel(next.model);
+      void updateModel(next.model, s.sampleKind);
     } else {
       const transformChange = !previous || s.modelScale !== previous.modelScale || s.modelUp !== previous.modelUp || s.modelUnits !== previous.modelUnits || s.modelRotation.some((n, i) => n !== previous.modelRotation[i]) || s.modelPosition.some((n, i) => n !== previous.modelPosition[i]);
       if (transformChange) clearMeasurement();

@@ -123,6 +123,58 @@ img { max-width: 100%; }
 .model-card-head strong { display: block; overflow: hidden; color: #44583a; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .model-card-head div span { display: block; margin-top: 3px; color: #69765f; font-size: 11px; }
 .model-card-head .icon-button { width: 24px; height: 28px; margin-right: -4px; }
+.sample-library-button { width: 100%; min-height: 34px; margin-top: 8px; border: 1px solid #d9e3d0; background: #fbfdf8; color: #526c46; font-size: 11px; }
+.sample-library-button svg:last-child { margin-left: auto; }
+.sample-quickbar { margin: -5px 0 18px; }
+.sample-quickbar-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 1px 8px; }
+.sample-quickbar-heading .eyebrow { font-size: 10px; }
+.sample-quickbar-heading b { margin-left: 6px; font-weight: 500; color: #8a957e; }
+.sample-quickbar-heading > button { display: inline-flex; align-items: center; gap: 4px; border: 0; padding: 2px 0; background: none; color: #69765f; font-size: 11px; }
+.sample-quickbar-heading > button:hover { color: #294d3e; }
+.sample-quick-options { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 7px; }
+.sample-quick-option { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; min-height: 76px; padding: 4px 6px 8px; border: 1px solid #dfe5d8; border-radius: 7px; background: #fbfcf9; color: #64715a; font-size: 11px; }
+.sample-quick-option:hover:not(:disabled) { border-color: #a8b99a; background: #f0f4e9; }
+.sample-quick-option.active { background: #edf3e6; border-color: #8da579; color: #365a2e; box-shadow: inset 0 0 0 1px #8da57928; }
+.sample-quick-option > svg:last-child:not(.shoe-sample-glyph) { position: absolute; top: 6px; right: 6px; }
+.sample-quick-option .shoe-sample-glyph { display: block; width: 72px; max-width: 100%; height: 46px; }
+.sample-quick-option > span { font-weight: 550; white-space: nowrap; }
+.sample-gallery { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; margin: 24px 0; }
+.sample-gallery-card { min-width: 0; overflow: hidden; border: 1px solid #dce3d6; border-radius: 10px; background: #f9fbf6; }
+.sample-gallery-card.selected { border-color: #8ea77b; box-shadow: 0 0 0 1px #8ea77b50; }
+.sample-gallery-select { position: relative; display: block; width: 100%; min-width: 0; border: 0; padding: 17px 17px 12px; background: none; text-align: left; }
+.sample-gallery-select:hover:not(:disabled) { background: #eef3e7; }
+.sample-card-number { color: #89947d; font-size: 11px; letter-spacing: 1px; }
+.sample-card-selected { position: absolute; top: 15px; right: 14px; display: inline-flex; gap: 4px; align-items: center; color: #4d7242; font-size: 11px; }
+.sample-card-art { display: grid; place-items: center; height: 100px; margin: 5px 0 12px; }
+.sample-card-art .shoe-sample-glyph { display: block; width: 190px; max-width: 100%; height: 106px; }
+.sample-gallery-select > strong { display: block; color: #344d2e; font-size: 16px; font-weight: 650; }
+.sample-gallery-select > strong small { display: block; margin-top: 4px; color: #7b8770; font-size: 11px; font-weight: 400; letter-spacing: .3px; }
+.sample-gallery-select > p { min-height: 38px; margin: 11px 0 7px; color: #69755f; font-size: 12px; line-height: 1.65; }
+.sample-card-size { color: #717e65; font-size: 11px; font-variant-numeric: tabular-nums; }
+.sample-card-action { display: flex; align-items: center; justify-content: space-between; gap: 5px; margin-top: 15px; padding-top: 11px; border-top: 1px solid #e0e6d9; color: #4a6841; font-size: 11px; }
+.sample-card-downloads { display: flex; gap: 9px; padding: 0 17px 14px; }
+.sample-card-downloads a { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 5px 10px; border: 1px solid #dce4d5; border-radius: 4px; color: #66785a; font-size: 11px; text-decoration: none; background: #fff; }
+.sample-card-downloads a:hover { border-color: #9bb18a; color: #35562e; }
+@media (min-width: 981px) {
+  .sample-quickbar + .viewport-shell .viewport-canvas-area { height: clamp(360px, calc(100dvh - 525px), 570px); min-height: 360px; }
+}
+@media (max-width: 620px) {
+  .sample-quick-options { gap: 4px; }
+  .sample-quick-option { padding: 2px 3px 7px; min-height: 69px; font-size: 11px; }
+  .sample-quick-option .shoe-sample-glyph { height: 42px; }
+  .sample-quickbar-heading .eyebrow { font-size: 9px; letter-spacing: .9px; }
+  .sample-quickbar-heading > button { font-size: 10px; }
+  .sample-gallery { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+  .sample-gallery-select { padding: 14px 12px 10px; }
+  .sample-card-downloads { padding: 0 12px 12px; gap: 6px; }
+  .sample-card-size { font-size: 11px; }
+}
+@media (max-width: 380px) {
+  .sample-quick-options { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .sample-quick-option { flex-direction: row; gap: 4px; min-height: 47px; }
+  .sample-quick-option .shoe-sample-glyph { width: 36px; height: 34px; }
+  .sample-gallery { grid-template-columns: minmax(0,1fr); }
+}
 .model-dimensions { margin: 13px 0 11px; color: #69765f; font-size: 11px; font-weight: 550; font-variant-numeric: tabular-nums; letter-spacing: -.15px; }
 .model-dimensions span { color: #69765f; font-size: 11px; font-weight: 400; }
 .model-upload { justify-content: flex-start; gap: 7px; width: 100%; min-height: 33px; padding: 7px 9px; border-color: #d8e1ce; background: #fbfdf8; color: #59744b; font-size: 11px; }

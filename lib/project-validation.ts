@@ -8,6 +8,7 @@ import {
   type SceneSettings,
   type Vec3,
 } from './project';
+import { DEFAULT_SAMPLE_KIND, SAMPLE_KINDS } from './shoe-sample-catalog'; // Changed
 
 export const PROJECT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PLANE_KEYS: PlaneKey[] = ['side', 'top', 'front', 'rear'];
@@ -133,6 +134,8 @@ export function validateProject(input: unknown): LastProject {
   }
   const raw = record(project.settings, '화면 설정');
   const settings: SceneSettings = {
+    // Changed: older version-1 projects have no selection; preserve their other data.
+    sampleKind: raw.sampleKind === undefined ? DEFAULT_SAMPLE_KIND : choice(raw.sampleKind, SAMPLE_KINDS, '신발 샘플'),
     dimensions: vector(raw.dimensions, '기준 치수', 1, 10000),
     gap: numeric(raw.gap, '면 간격', 0, 2000),
     imageOpacity: numeric(raw.imageOpacity, '이미지 불투명도', 0, 1),

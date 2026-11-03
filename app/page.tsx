@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import LastViewport from '@/components/last-viewport';
 import ReferenceDimensions from '@/components/reference-dimensions';
+import { ShoeSampleGallery, ShoeSampleQuickbar } from '@/components/shoe-sample-picker';
 import {
   createDefaultProject, PLANE_LABELS, type LastProject, type ModelInfo,
   type PlaneKey, type SceneSettings, type Vec3, type ViewKey,
@@ -21,6 +22,7 @@ import {
 import { loadDraft, saveDraft } from '@/lib/local-store';
 import { createReferenceProject } from '@/lib/reference-preset';
 import { REFERENCE_DIMENSIONS } from '@/lib/reference-data';
+import { SHOE_SAMPLES, DEFAULT_SAMPLE_KIND, type SampleKind } from '@/lib/shoe-sample-catalog';
 
 const PLANE_KEYS: PlaneKey[] = ['side', 'top', 'front', 'rear'];
 const VIEWS: { key: ViewKey; label: string; axis: string }[] = [
@@ -28,7 +30,7 @@ const VIEWS: { key: ViewKey; label: string; axis: string }[] = [
   { key: 'top', label: '윗면', axis: 'XY' }, { key: 'front', label: '정면', axis: 'YZ' },
   { key: 'rear', label: '후면', axis: 'YZ' },
 ];
-type ModalKind = 'share' | 'help' | 'references' | 'dimensions' | 'reset' | null;
+type ModalKind = 'share' | 'help' | 'references' | 'dimensions' | 'samples' | 'reset' | null;
 type Notice = { message: string; type: 'success' | 'error' };
 
 function NumberField({ label, value, onChange, min = -10000, max = 10000, step = 1, suffix }: {
@@ -143,6 +145,8 @@ export default function Home() {
   const uploadPlane = useRef<PlaneKey>('side');
   const dragCount = useRef(0);
   const mounted = useRef(true);
+  const currentProject = useRef(project);
+  currentProject.current = project;
   const previousModel = useRef<{ model: LastProject['model']; settings: SceneSettings } | null>(null);
 
   const notify = useCallback((message: string, type: Notice['type'] = 'success') => setNotice({ message, type }), []);
@@ -239,7 +243,7 @@ export default function Home() {
   async function importProject(file: File) {
     await runTask('프로젝트를 여는 중', async () => {
       const next = await readProjectFile(file);
-      previousModel.current = { model: project.model, settings: project.settings };
+      previousModel.current = next.model || project.model || next.settings.sampleKind !== project.settings.sampleKind ? { model: project.model, settings: project.settings } : null;
       setProject(next); setMeasure(false);
       setResetToken(n => n + 1);
       window.history.replaceState(null, '', window.location.pathname);
@@ -255,6 +259,24 @@ export default function Home() {
   }
 
   function selectImage(key: PlaneKey) { uploadPlane.current = key; imageInput.current?.click(); }
+
+  function chooseSample(kind: SampleKind) {
+    const sample = SHOE_SAMPLES.find(item => item.id === kind)!;
+    previousModel.current = project.model || project.settings.sampleKind !== kind ? { model: project.model, settings: project.settings } : null;
+    setProject(previous => ({ ...previous, model: null,
+      settings: { ...previous.settings, sampleKind: kind, modelPosition: [0, 0, 0], modelRotation: [0, 0, 0], modelScale: 1, modelUnits: 'mm', modelUp: 'z', showLast: true, view: 'iso' },
+      planes: Object.fromEntries(PLANE_KEYS.map(key => [key, { ...previous.planes[key], visible: false }])) as LastProject['planes'],
+    }));
+    setMeasure(false); setDistance(null); setResetToken(n => n + 1); setModal(null); setMobilePanel(null);
+    notify(`${sample.name} 신발 샘플을 적용했습니다.`);
+  }
+
+  function toggleReferences() {
+    setProject(previous => {
+      const show = !PLANE_KEYS.some(key => previous.planes[key].visible);
+      return { ...previous, planes: Object.fromEntries(PLANE_KEYS.map(key => [key, { ...previous.planes[key], visible: show }])) as LastProject['planes'] };
+    });
+  }
 
   async function acceptFile(e: ChangeEvent<HTMLInputElement>, type: 'model' | 'project' | 'image') {
     const file = e.target.files?.[0]; e.target.value = '';
@@ -277,14 +299,20 @@ export default function Home() {
   }
 
   async function createShare() {
+    const snapshot = project;
     setSharing(true);
     try {
-      const saved = await saveProjectSnapshot(project);
+      const saved = await saveProjectSnapshot(snapshot);
+      if (!mounted.current) return;
+      if (currentProject.current !== snapshot) {
+        notify('저장 중 프로젝트가 변경되었습니다. 현재 상태로 링크를 다시 만들어 주세요.');
+        return;
+      }
       const url = new URL(window.location.pathname, window.location.origin);
       url.searchParams.set('project', saved.id); setShareUrl(url.href);
       notify('현재 형상과 이미지가 함께 저장되었습니다.');
     } catch (error) { reportError(error instanceof Error ? error.message : '공유 프로젝트를 저장하지 못했습니다.'); }
-    finally { setSharing(false); }
+    finally { if (mounted.current) setSharing(false); }
   }
 
   async function copyLink() {
@@ -313,6 +341,9 @@ export default function Home() {
   }
 
   const settings = project.settings;
+  const sampleDefinition = SHOE_SAMPLES.find(sample => sample.id === (settings.sampleKind ?? DEFAULT_SAMPLE_KIND))!;
+  const modelName = project.model?.name ?? `${sampleDefinition.name} · 샘플`;
+  const referencesVisible = PLANE_KEYS.some(key => project.planes[key].visible);
   const selected = project.planes[selectedPlane];
   const importedCount = PLANE_KEYS.filter(key => project.planes[key].image).length;
 
@@ -338,17 +369,18 @@ export default function Home() {
           <button className="icon-button desktop-only" onClick={() => setModal('reset')} aria-label="새 샘플 프로젝트"><Plus size={17} /></button>
         </div>
         <div className="workspace-item"><span className="workspace-icon"><Layers size={18} /></span><div><strong>신발 디자인</strong><span>다측면 & 라스트</span></div><ChevronDown size={14} /></div>
-        <div className="section-label"><span>3D 라스트</span><span className="count-badge">01</span></div>
+        <div className="section-label"><span>3D 모델</span><span className="count-badge">01</span></div>
         <div className="model-card">
           <div className="model-card-head"><span className="file-icon"><Box size={21} strokeWidth={1.4} /></span>
-            <div><strong title={project.model?.name}>{project.model?.name ?? 'Studio Last 253'}</strong><span>{project.model ? `${project.model.format.toUpperCase()} · 사용자 모델` : '조작용 예시 라스트'}</span></div>
+            <div><strong title={modelName}>{modelName}</strong><span>{project.model ? `${project.model.format.toUpperCase()} · 사용자 모델` : `${sampleDefinition.englishName} · 개념 모델`}</span></div>
             <button className={`icon-button ${settings.showLast ? 'is-visible' : ''}`} onClick={() => updateSettings({ showLast: !settings.showLast })}
-              aria-label={settings.showLast ? '라스트 숨기기' : '라스트 표시'} aria-pressed={settings.showLast}>{settings.showLast ? <Eye size={16} /> : <EyeOff size={16} />}</button>
+              aria-label={settings.showLast ? '모델 숨기기' : '모델 표시'} aria-pressed={settings.showLast}>{settings.showLast ? <Eye size={16} /> : <EyeOff size={16} />}</button>
           </div>
           <div className="model-dimensions">{modelInfo.dimensions.map(n => n.toFixed(1)).join(' × ')} <span>mm</span></div>
-          <button className="button model-upload" onClick={() => modelInput.current?.click()} disabled={!!busy}><Upload size={14} />라스트 불러오기<ArrowUpRight size={14} /></button>
+          <button className="button model-upload" onClick={() => modelInput.current?.click()} disabled={!!busy}><Upload size={14} />모델 불러오기<ArrowUpRight size={14} /></button>
           <div className="file-formats">STL · OBJ · GLB<span>최대 15 MB</span></div>
         </div>
+        <button className="button sample-library-button" onClick={() => setModal('samples')}><Grid3X3 size={14} />신발 샘플 5종<ArrowUpRight size={14} /></button>
         <div className="section-label"><span>참조 이미지</span><span className="count-badge">{String(importedCount).padStart(2, '0')} / 04</span></div>
         <div className="plane-list">{PLANE_KEYS.map(key => <div key={key} className={`plane-row ${selectedPlane === key ? 'selected' : ''}`}>
           <button className="plane-select" onClick={() => { setSelectedPlane(key); setInspector('view'); }} aria-pressed={selectedPlane === key}>
@@ -373,10 +405,11 @@ export default function Home() {
             onChange={e => setProject(previous => ({ ...previous, title: e.target.value }))}
             onBlur={() => { if (!project.title.trim()) setProject(previous => ({ ...previous, title: '이름 없는 프로젝트' })); }} />
           <p>다측면 이미지와 입체 형상을 한 공간에서 검토하세요.</p></div>
-          <div className="project-state"><span className="state-dot" />{project.model ? '사용자 라스트' : '샘플 프로젝트'}<small>{project.model ? '실측 단위를 확인하세요' : '원본 라스트로 교체해 보세요'}</small></div>
+          <div className="project-state"><span className="state-dot" />{project.model ? '사용자 모델' : `${sampleDefinition.name} 샘플`}<small>{project.model ? '실측 단위를 확인하세요' : '다섯 가지 신발 형태를 비교하세요'}</small></div>
         </div>
         <div className="mobile-panel-buttons"><button className="button button-outline" onClick={() => setMobilePanel('sources')}><Layers size={16} />모델·이미지</button>
           <button className="button button-outline" onClick={() => setMobilePanel('settings')}><SlidersHorizontal size={16} />보기·정렬</button></div>
+        <ShoeSampleQuickbar selected={project.model ? null : sampleDefinition.id} disabled={!ready || !!busy} onSelect={chooseSample} onDetails={() => setModal('samples')} />
         <div className="viewport-shell" ref={stageRef}
           onDragEnter={e => { e.preventDefault(); if (e.dataTransfer.types.includes('Files')) { dragCount.current++; setIsDragging(true); } }}
           onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
@@ -394,12 +427,12 @@ export default function Home() {
             {ready && <LastViewport project={project} onModelInfo={modelChanged} onError={reportError}
               measure={measure} onMeasure={measurementChanged} resetToken={resetToken} screenshotToken={screenshotToken} onModelLoaded={modelLoaded} onRenderMode={setRenderMode} />}
             <div className="viewport-top-label"><span className="view-dot" /><span>{VIEWS.find(v => v.key === settings.view)?.axis}</span><span className="label-divider" />{settings.orthographic || settings.view !== 'iso' ? '정사영' : '원근 뷰'}{renderMode === 'software' && <span title="이 브라우저에서는 3D 형상을 호환 모드로 표시합니다"> · 호환 렌더링</span>}</div>
-            {!project.model && <div className="sample-label">DEMO LAST<span>설계 치수 검증용 모델이 아닙니다</span></div>}
+            {!project.model && <div className="sample-label">{sampleDefinition.englishName.toUpperCase()}<span>신발 개념 샘플 · 제조 검증 전</span></div>}
             {(!ready || busy) && <div className="loading-overlay"><Loader2 className="spin" size={24} /><span>{busy || '작업 공간을 준비하는 중'}</span></div>}
             {isDragging && <div className="drop-overlay"><Upload size={34} /><strong>여기에 파일을 놓으세요</strong><span>3D 모델 · 프로젝트 · {PLANE_LABELS[selectedPlane].name} 참조 이미지</span></div>}
-            <div className="canvas-actionbar"><button className={measure ? 'active' : ''} onClick={() => setMeasure(v => !v)} aria-pressed={measure}><Ruler size={17} /><span>거리 측정</span></button>
+            <div className="canvas-actionbar"><button className={referencesVisible ? 'active' : ''} onClick={toggleReferences} aria-pressed={referencesVisible}><Layers size={17} /><span>참조 이미지</span></button><span className="toolbar-separator" /><button className={measure ? 'active' : ''} onClick={() => setMeasure(v => !v)} aria-pressed={measure}><Ruler size={17} /><span>거리 측정</span></button>
               <span className="toolbar-separator" /><button onClick={() => setScreenshotToken(n => n + 1)}><Camera size={17} /><span>화면 저장</span></button></div>
-            {measure && <div className="measure-readout" role="status"><Ruler size={15} />{distance === null ? '라스트 표면에서 두 점을 선택하세요' : <><strong>{distance.toFixed(2)}</strong> mm<span>다시 선택하면 새로 측정합니다</span></>}</div>}
+            {measure && <div className="measure-readout" role="status"><Ruler size={15} />{distance === null ? '모델 표면에서 두 점을 선택하세요' : <><strong>{distance.toFixed(2)}</strong> mm<span>다시 선택하면 새로 측정합니다</span></>}</div>}
           </div>
           <div className="viewport-footer"><span className="mouse-hint"><Move size={13} />드래그: 회전<span>·</span>휠: 확대<span>·</span>우클릭: 이동</span>
             <span className="touch-hint">한 손가락: 회전 · 두 손가락: 확대·이동</span><span className="unit-indicator">단위 <b>mm</b></span></div>
@@ -417,17 +450,17 @@ export default function Home() {
         <div className="panel-top"><span className="eyebrow">INSPECTOR</span><SlidersHorizontal size={15} className="desktop-only" />
           <button className="icon-button mobile-only" onClick={() => setMobilePanel(null)} aria-label="설정 패널 닫기"><X size={18} /></button></div>
         <div className="inspector-tabs" role="group" aria-label="설정 종류"><button className={inspector === 'view' ? 'active' : ''} onClick={() => setInspector('view')}>보기 설정</button>
-          <button className={inspector === 'transform' ? 'active' : ''} onClick={() => setInspector('transform')}>라스트 정렬</button></div>
+          <button className={inspector === 'transform' ? 'active' : ''} onClick={() => setInspector('transform')}>모델 정렬</button></div>
         {inspector === 'view' ? <>
           <section className="inspector-section"><h2>평면 배치<span className="subtle-icon"><Layers size={15} /></span></h2>
             <RangeField label="면 간격" value={settings.gap} max={120} unit="mm" onChange={gap => updateSettings({ gap })} />
             <RangeField label="이미지 불투명도" value={settings.imageOpacity * 100} unit="%" onChange={v => updateSettings({ imageOpacity: v / 100 })} />
-            <RangeField label="라스트 불투명도" value={settings.lastOpacity * 100} min={5} unit="%" onChange={v => updateSettings({ lastOpacity: v / 100 })} />
+            <RangeField label="모델 불투명도" value={settings.lastOpacity * 100} min={5} unit="%" onChange={v => updateSettings({ lastOpacity: v / 100 })} />
           </section>
           <section className="inspector-section"><h2>기준 프레임<span className="unit-label">mm</span></h2>
             <p className="section-description">이미지가 배치되는 공간의 실제 크기</p>
             <VectorFields label="크기" unit="" value={settings.dimensions} min={1} max={10000} onChange={dimensions => updateSettings({ dimensions })} />
-            <button className="text-button fit-frame" onClick={() => { updateSettings({ dimensions: modelInfo.dimensions.map(n => Math.max(1, Math.round(n * 10) / 10)) as Vec3 }); notify('기준 프레임을 라스트 크기에 맞췄습니다.'); }}><Box size={13} />라스트 크기에 맞추기</button>
+            <button className="text-button fit-frame" onClick={() => { updateSettings({ dimensions: modelInfo.dimensions.map(n => Math.max(1, Math.round(n * 10) / 10)) as Vec3 }); notify('기준 프레임을 모델 크기에 맞췄습니다.'); }}><Box size={13} />모델 크기에 맞추기</button>
           </section>
           <section className="inspector-section"><h2>{PLANE_LABELS[selectedPlane].name} 이미지<span className="axis-pill">{PLANE_LABELS[selectedPlane].axis}</span></h2>
             <button className="selected-image" onClick={() => selectImage(selectedPlane)} disabled={!!busy}><span className="selected-image-preview"><PlaneThumbnail plane={selectedPlane} project={project} /></span>
@@ -438,7 +471,7 @@ export default function Home() {
           <section className="inspector-section"><h2>화면 표시</h2><Toggle label="바닥 그리드" checked={settings.grid} onChange={grid => updateSettings({ grid })} />
             <Toggle label="XYZ 좌표축" checked={settings.axes} onChange={axes => updateSettings({ axes })} />
             <Toggle label="기준 프레임" checked={settings.bounds} onChange={bounds => updateSettings({ bounds })} />
-            <Toggle label="라스트 와이어프레임" checked={settings.wireframe} onChange={wireframe => updateSettings({ wireframe })} />
+            <Toggle label="모델 와이어프레임" checked={settings.wireframe} onChange={wireframe => updateSettings({ wireframe })} />
           </section>
         </> : <>
           <section className="inspector-section"><h2>원본 좌표계<span className="subtle-icon"><Box size={15} /></span></h2>
@@ -460,7 +493,7 @@ export default function Home() {
           </section>
           <section className="inspector-section"><h2>균일 배율</h2><NumberField label="전체 배율" value={settings.modelScale} min={0.001} max={1000} step={0.01} suffix="×" onChange={modelScale => updateSettings({ modelScale })} />
             <p className="section-description">가로·세로·높이의 비율을 유지합니다.</p></section>
-          <section className="inspector-section"><h2>현재 라스트 크기</h2><div className="size-readout">{['길이 X', '폭 Y', '높이 Z'].map((label, i) => <div key={label}><span>{label}</span><strong>{modelInfo.dimensions[i].toFixed(2)}<small>mm</small></strong></div>)}</div>
+          <section className="inspector-section"><h2>현재 모델 크기</h2><div className="size-readout">{['길이 X', '폭 Y', '높이 Z'].map((label, i) => <div key={label}><span>{label}</span><strong>{modelInfo.dimensions[i].toFixed(2)}<small>mm</small></strong></div>)}</div>
             {modelInfo.triangles > 0 && <p className="section-description">{modelInfo.triangles.toLocaleString('ko-KR')} triangles</p>}
             <button className="button button-outline reset-transform" onClick={() => updateSettings({ modelPosition: [0, 0, 0], modelRotation: [0, 0, 0], modelScale: 1 })}><RotateCcw size={14} />정렬값 초기화</button>
           </section>
@@ -471,23 +504,26 @@ export default function Home() {
     {mobilePanel && <button className="mobile-scrim" aria-label="패널 닫기" onClick={() => setMobilePanel(null)} />}
     {notice && <div className={`toast ${notice.type}`} role={notice.type === 'error' ? 'alert' : 'status'}>{notice.type === 'success' ? <Check size={17} /> : <CircleHelp size={17} />}<span>{notice.message}</span><button aria-label="알림 닫기" onClick={() => setNotice(null)}><X size={15} /></button></div>}
     <Dialog open={modal === 'share'} title="같은 형상을, 함께 검토하세요" onClose={() => setModal(null)}>
-      <p className="dialog-description">현재 이미지, 3D 라스트, 정렬값을 하나의 프로젝트로 저장합니다.</p>
-      <div className="share-preview"><span className="share-icon"><Box size={28} strokeWidth={1.3} /></span><div><strong>{project.title}</strong><p>{project.model?.name ?? 'Studio Last 253 · 샘플'}<span>참조 이미지 {importedCount}개</span></p></div></div>
+      <p className="dialog-description">현재 이미지, 3D 모델 또는 선택한 샘플 종류, 정렬값을 하나의 프로젝트로 저장합니다.</p>
+      <div className="share-preview"><span className="share-icon"><Box size={28} strokeWidth={1.3} /></span><div><strong>{project.title}</strong><p>{modelName}<span>참조 이미지 {importedCount}개</span></p></div></div>
       <div className="share-section"><h3><Link2 size={17} />저장된 프로젝트 링크</h3><p>현재 상태를 서버에 저장합니다. 이후 수정한 내용은 새 링크로 공유하세요.</p>
         {shareUrl ? <div className="share-link-row"><input aria-label="공유 링크" readOnly value={shareUrl} onFocus={e => e.target.select()} /><button className="button button-primary" onClick={() => void copyLink()}>{copied ? <Check size={15} /> : <Copy size={15} />}{copied ? '복사됨' : '복사'}</button></div> :
           <button className="button button-primary full-width" onClick={() => void createShare()} disabled={sharing}>{sharing ? <Loader2 className="spin" size={16} /> : <Share2 size={16} />}{sharing ? '프로젝트를 저장하는 중' : '프로젝트 저장 · 링크 만들기'}</button>}
-        <p className="sharing-access-note">이 사이트에 접근 권한이 있는 사람만 링크를 열 수 있습니다. 사이트의 공유 메뉴에서 상대방에게 보기 권한을 부여하세요.</p>
+        <p className="sharing-access-note">프로젝트 링크의 접근 범위는 사이트의 공유 설정을 따릅니다. 공유 전에 사이트 공개 범위를 확인하세요.</p>
       </div>
       <div className="share-section file-share"><div><h3><FileJson size={17} />프로젝트 파일</h3><p>이미지와 모델을 포함한 파일을 전달할 수도 있습니다.</p></div><button className="button button-outline" onClick={exportFile}><Download size={16} />파일 저장</button></div>
     </Dialog>
     <Dialog open={modal === 'help'} title="Last Studio 사용 가이드" onClose={() => setModal(null)}>
-      <p className="dialog-description">네 방향의 이미지와 실제 라스트를 같은 좌표계에서 검토합니다.</p>
-      <ol className="guide-steps"><li><span>01</span><div><h3>라스트를 불러옵니다</h3><p>STL·OBJ·GLB 파일을 선택하세요. GLB는 미터·Y축, STL은 mm·Z축을 기본으로 제안합니다. 실제 파일에 맞게 원본 좌표계를 확인하세요.</p></div></li>
+      <p className="dialog-description">네 방향의 이미지와 신발 샘플 또는 실제 라스트를 같은 좌표계에서 검토합니다.</p>
+      <ol className="guide-steps"><li><span>01</span><div><h3>신발 샘플을 고르거나 모델을 불러옵니다</h3><p>화면 위에서 신발 5종을 선택하거나 STL·OBJ·GLB를 불러오세요. GLB는 미터·Y축, STL은 mm·Z축을 기본으로 제안합니다. 실제 파일의 단위와 축을 확인하세요.</p></div></li>
         <li><span>02</span><div><h3>각 방향의 이미지를 배치합니다</h3><p>측면·윗면·정면·후면을 선택해 이미지를 넣으세요. 대상 외곽에 맞춰 자른 정사영 이미지가 비교하기 좋습니다.</p></div></li>
-        <li><span>03</span><div><h3>크기와 위치를 맞춥니다</h3><p>기준 프레임은 이미지의 실제 크기입니다. 라스트 정렬에서 위치·회전·균일 배율을 조절하고, 면 간격과 투명도로 형상을 비교하세요.</p></div></li>
+        <li><span>03</span><div><h3>크기와 위치를 맞춥니다</h3><p>기준 프레임은 이미지의 실제 크기입니다. 모델 정렬에서 위치·회전·균일 배율을 조절하고, 면 간격과 투명도로 형상을 비교하세요.</p></div></li>
         <li><span>04</span><div><h3>프로젝트를 저장하고 공유합니다</h3><p>‘공유’에서 현재 상태를 저장해 링크를 만들거나 프로젝트 파일을 내려받으세요. 파일은 ‘열기’로 복원합니다.</p></div></li></ol>
-      <div className="guide-note"><Ruler size={18} /><p>거리 측정은 라스트 표면의 두 점 사이 직선거리입니다. 둘레·곡면 길이나 착화 적합성을 판정하지 않습니다.</p></div>
-      <div className="guide-note"><ImageIcon size={18} /><p>기본 이미지는 제공된 치수표에서 도면 영역을 등록한 것입니다. ‘기준 치수표’에서 원문 수치를 확인하세요. 기본 라스트는 조작을 위한 예시이며 실제 형상을 복원한 결과가 아닙니다.</p></div>
+      <div className="guide-note"><Ruler size={18} /><p>거리 측정은 모델 표면의 두 점 사이 직선거리입니다. 둘레·곡면 길이나 착화 적합성을 판정하지 않습니다.</p></div>
+      <div className="guide-note"><ImageIcon size={18} /><p>기본 이미지는 제공된 치수표의 도면 영역입니다. 신발 5종은 독립적인 개념 샘플이며, 참조 사진이나 실제 라스트를 복원한 형상이 아닙니다.</p></div>
+    </Dialog>
+    <Dialog open={modal === 'samples'} title="신발 샘플 컬렉션 · 5종" onClose={() => setModal(null)} wide>
+      <ShoeSampleGallery selected={project.model ? null : sampleDefinition.id} disabled={!ready || !!busy} onSelect={chooseSample} />
     </Dialog>
     <Dialog open={modal === 'dimensions'} title="SHOOB F240 · 기준 치수표" onClose={() => setModal(null)} wide>
       <ReferenceDimensions onApply={() => { updateSettings({ dimensions: [REFERENCE_DIMENSIONS.length, REFERENCE_DIMENSIONS.width, REFERENCE_DIMENSIONS.height] }); notify('기준 프레임에 제공하신 외곽 치수를 적용했습니다.'); }} />

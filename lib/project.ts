@@ -1,3 +1,5 @@
+import { DEFAULT_SAMPLE_KIND, type SampleKind } from './shoe-sample-catalog'; // Changed
+
 export const PROJECT_VERSION = 1;
 export const MAX_ASSET_BYTES = 15 * 1024 * 1024;
 export const MAX_PROJECT_BYTES = 30 * 1024 * 1024;
@@ -24,6 +26,7 @@ export interface ModelAsset {
 }
 
 export interface SceneSettings {
+  sampleKind: SampleKind; // Changed: stored selection; uploaded model retains priority.
   dimensions: Vec3;
   gap: number;
   imageOpacity: number;
@@ -69,6 +72,7 @@ export function createDefaultProject(): LastProject {
   return {
     schema: 'last-studio', version: 1, title: 'SHOOB F240 형상 검토',
     settings: {
+      sampleKind: DEFAULT_SAMPLE_KIND, // Changed
       dimensions: [253, 105.31, 79.4], gap: 28, imageOpacity: 0.58,
       lastOpacity: 1, grid: true, axes: true, bounds: false,
       wireframe: false, showLast: true, view: 'iso', orthographic: false,

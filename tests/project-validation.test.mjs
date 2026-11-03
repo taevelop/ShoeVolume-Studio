@@ -28,6 +28,7 @@ registerHooks({
 });
 
 const { createDefaultProject, MAX_ASSET_BYTES } = await import('../lib/project.ts');
+const { SAMPLE_KINDS } = await import('../lib/shoe-sample-catalog.ts');
 const { validateProject, validateImageAsset, validateModelAsset, estimateProjectBytes } = await import('../lib/project-validation.ts');
 const png = 'data:image/png;base64,' + Buffer.from('\x89PNG\r\n\x1a\n', 'binary').toString('base64');
 
@@ -81,4 +82,57 @@ test('rejects invalid GLB header and unsupported project versions', () => {
   const project = createDefaultProject();
   project.version = 2;
   assert.throws(() => validateProject(project));
+});
+
+// Changed: saved projects from before shoe selection remain valid without migrations.
+test('loads a legacy project with loafer selected and preserves its reference data', () => {
+  const legacy = createDefaultProject();
+  delete legacy.settings.sampleKind;
+  legacy.planes.side.image = { name: 'original-reference.png', dataUrl: png };
+  legacy.settings.modelPosition = [12, -3, 1.5];
+  const clean = validateProject(JSON.parse(JSON.stringify(legacy)));
+  assert.equal(clean.settings.sampleKind, 'loafer');
+  assert.deepEqual(clean.settings.dimensions, [253, 105.31, 79.4]);
+  assert.deepEqual(clean.settings.modelPosition, [12, -3, 1.5]);
+  assert.deepEqual(clean.planes, legacy.planes);
+});
+
+test('round-trips all five shoe selections with saved project metadata and transforms', () => {
+  assert.equal(SAMPLE_KINDS.length, 5);
+  for (const sampleKind of SAMPLE_KINDS) {
+    const project = createDefaultProject();
+    project.settings.sampleKind = sampleKind;
+    project.settings.modelRotation = [0, 0, 45];
+    project.settings.modelScale = 1.25;
+    project.title = `샘플 비교 ${sampleKind}`;
+    project.savedAt = '2026-11-02T08:00:00.000Z';
+    assert.deepEqual(validateProject(JSON.parse(JSON.stringify(project))), project);
+  }
+});
+
+test('rejects unknown or malformed explicit shoe selections', () => {
+  for (const sampleKind of ['foot', 'boot', '', null, 1, {}]) {
+    const project = createDefaultProject();
+    project.settings.sampleKind = sampleKind;
+    assert.throws(() => validateProject(project));
+  }
+});
+
+test('preserves an uploaded model when normalizing a legacy or selected-sample project', () => {
+  const model = {
+    name: 'original-last.obj', format: 'obj',
+    dataUrl: 'data:application/octet-stream;base64,' + Buffer.from('v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n').toString('base64'),
+  };
+  for (const sampleKind of [undefined, 'ankle-boot']) {
+    const project = createDefaultProject();
+    project.model = model;
+    project.settings.sampleKind = sampleKind;
+    project.settings.modelUnits = 'cm';
+    project.settings.modelUp = 'y';
+    const clean = validateProject(JSON.parse(JSON.stringify(project)));
+    assert.deepEqual(clean.model, model);
+    assert.equal(clean.settings.modelUnits, 'cm');
+    assert.equal(clean.settings.modelUp, 'y');
+    assert.equal(clean.settings.sampleKind, sampleKind ?? 'loafer');
+  }
 });

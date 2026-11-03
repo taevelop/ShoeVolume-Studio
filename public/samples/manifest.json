@@ -1,0 +1,82 @@
+{
+  "description": "Illustrative multi-part concept shoes, not measured production models. Some component solids overlap; manufacturing suitability has not been validated.",
+  "coordinateSystems": {
+    "stl": {
+      "units": "mm",
+      "up": "z",
+      "toe": "+x"
+    },
+    "glb": {
+      "units": "m",
+      "up": "y",
+      "toe": "+x"
+    }
+  },
+  "samples": [
+    {
+      "id": "loafer",
+      "name": "로퍼",
+      "dimensionsMm": [
+        253,
+        105.31,
+        79.4
+      ],
+      "meshes": 20,
+      "triangles": 11240,
+      "glbBytes": 250292,
+      "stlBytes": 562084
+    },
+    {
+      "id": "sneaker",
+      "name": "스니커즈",
+      "dimensionsMm": [
+        253,
+        105.31,
+        95
+      ],
+      "meshes": 41,
+      "triangles": 14756,
+      "glbBytes": 355920,
+      "stlBytes": 737884
+    },
+    {
+      "id": "mary-jane",
+      "name": "메리제인",
+      "dimensionsMm": [
+        253,
+        105.31,
+        79.4
+      ],
+      "meshes": 22,
+      "triangles": 8684,
+      "glbBytes": 209608,
+      "stlBytes": 434284
+    },
+    {
+      "id": "sandal",
+      "name": "샌들",
+      "dimensionsMm": [
+        253,
+        105.31,
+        55
+      ],
+      "meshes": 22,
+      "triangles": 3048,
+      "glbBytes": 101780,
+      "stlBytes": 152484
+    },
+    {
+      "id": "ankle-boot",
+      "name": "앵클부츠",
+      "dimensionsMm": [
+        253,
+        105.31,
+        145
+      ],
+      "meshes": 32,
+      "triangles": 15876,
+      "glbBytes": 374424,
+      "stlBytes": 793884
+    }
+  ]
+}
